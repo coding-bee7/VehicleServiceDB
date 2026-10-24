@@ -65,7 +65,7 @@ React and Tailwind CSS belong to the frontend. They communicate with the Flask b
 
 ## 4. Repository Structure
 
-The branch is organized around the application, database scripts, documentation, testing, and presentation materials.
+The `backend` branch contains the backend application, database scripts, documentation, testing materials, and presentation files.
 
 ```text
 VehicleServiceDB/
@@ -76,54 +76,80 @@ VehicleServiceDB/
 │       ├── requirements.txt
 │       └── README.md
 ├── database/
+│   ├── README.md
 │   ├── schema.sql
 │   ├── sample_data.sql
-│   └── queries.sql
+│   ├── queries.sql
+│   ├── user_account.sql
+│   └── service_completion_verification.sql
 ├── documentation/
 ├── testing/
 └── presentation/
 ```
 
-The tree describes the intended organization. Individual files should be included only if they have actually been created and committed. This root README documents the backend branch as a whole; `application/backend/README.md` can contain backend-specific setup details.
+The tree shows the intended organization. Confirm that each listed directory and file exists in the branch before final submission.
 
-## 5. Database
+## 5. Database and SQL Files
 
-The backend connects to the MySQL database named `VehicleServiceDB`.
+**Database name:** `VehicleServiceDB`
 
-The database supports the project's core entities and operations, including:
+The backend uses MySQL to store and manage customers, vehicles, appointments, employees, service records, service tasks, spare parts, part usage, invoices, and user accounts.
 
-- Customers and vehicles
-- Appointments
-- Employees and staff roles
-- Service records and service tasks
-- Spare parts and part usage
-- Invoices and payment status
-- User accounts and account roles
+The `database/` directory contains the following files:
 
-The SQL schema defines the table structures, primary keys, foreign keys, uniqueness requirements, and data constraints.
-
-### UserAccount
-
-The `UserAccount` table supports authentication and connects an account to a customer or employee record.
-
-| Column | Purpose |
+| File | Purpose |
 |---|---|
-| `UserID` | Primary key |
-| `Email` | Unique login email |
-| `PasswordHash` | Hashed password |
-| `Role` | Account role |
-| `CustomerID` | Optional customer reference |
-| `EmployeeID` | Optional employee reference |
-| `IsActive` | Account activation status |
-| `CreatedAt` | Account creation timestamp |
+| `README.md` | Overview of the database directory and its SQL resources. |
+| `schema.sql` | Defines the database schema, including table structures and relationships. |
+| `sample_data.sql` | Provides sample records for development and testing. |
+| `queries.sql` | Contains SQL queries used for database operations, retrieval, or reporting. |
+| `user_account.sql` | Contains SQL related to the `UserAccount` authentication table and its verification. |
+| `service_completion_verification.sql` | Contains SQL statements for inspecting and verifying service-completion, inventory, and invoice-related database records. |
 
-The database constraints associate customer accounts with customer records and staff accounts with employee records.
+### Recommended SQL execution order
 
-### PartUsage and inventory
+For a fresh database setup:
 
-The `PartUsage` table records the parts used during a service. Its `StockDeducted` field tracks whether a usage record has already been applied to inventory.
+1. Execute `schema.sql` to create the required database tables and relationships.
+2. Execute `sample_data.sql` to populate the database with suitable sample records.
+3. Execute `queries.sql` when you need to run the project's database queries.
+4. Use `user_account.sql` for account-table setup or verification as appropriate.
+5. Use `service_completion_verification.sql` to inspect the database state after service-completion operations.
 
-This flag is important for preventing duplicate inventory deductions when a service-completion request is repeated.
+**Important:** Check the contents of `user_account.sql` before running it. If `schema.sql` already creates `UserAccount`, the account script may duplicate that setup. Similarly, verification scripts should generally be run after the relevant tables and test records exist.
+
+The exact execution order depends on the SQL statements and dependencies in each file.
+
+### Core database functionality
+
+The schema supports:
+
+- Customer and vehicle records
+- Service appointments and service records
+- Employee and staff-role management
+- Service tasks and labour costs
+- Spare-part inventory and part usage
+- Invoice totals and payment status
+- User accounts linked to customers or employees
+
+### Authentication and inventory support
+
+The `UserAccount` table supports login and role-based access through fields such as `Email`, `PasswordHash`, `Role`, `CustomerID`, `EmployeeID`, and `IsActive`.
+
+The `PartUsage.StockDeducted` field tracks whether recorded part usage has already been applied to inventory. The backend uses this flag to avoid deducting stock again when an already completed service is requested a second time.
+
+### Database setup requirements
+
+Before running the backend, ensure that:
+
+- MySQL Server is running.
+- The `VehicleServiceDB` schema has been created.
+- All required tables and foreign-key relationships exist.
+- `UserAccount` is available for authentication.
+- `PartUsage.StockDeducted` exists for the service-completion workflow.
+- Sample data is appropriate for the local development environment.
+
+Do not commit real customer information, database credentials, passwords, or other sensitive data to the repository.
 
 ## 6. Authentication and Authorization
 
