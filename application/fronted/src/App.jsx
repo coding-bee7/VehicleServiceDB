@@ -1600,6 +1600,10 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
           />
         )}
 
+        {page === "inventory" && (
+          <InventoryManagement user={user} />
+        )}
+
         {page === "payments" && user?.role === "admin" && (
           <main className="payments-page">
             {showInvoiceDetails && (
@@ -2072,6 +2076,7 @@ function AppNavbar({ user, navigate, logout, menuOpen, setMenuOpen }) {
         {user?.role === "admin" && (
           <>
             <button onClick={() => navigate("admin")}>ADMIN OVERVIEW</button>
+            <button onClick={() => navigate("inventory")}>INVENTORY</button>
             <button onClick={() => navigate("payments")}>PAYMENTS</button>
           </>
         )}
@@ -3360,6 +3365,351 @@ function ApiNotice({ text }) {
         <code>src/services/api.js</code>.
       </small>
     </div>
+  );
+}
+
+
+function InventoryManagement({ user }) {
+  const [parts, setParts] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [restockAmounts, setRestockAmounts] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [savingAction, setSavingAction] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [formError, setFormError] = useState("");
+  const [newPart, setNewPart] = useState({
+    PartName: "",
+    StockQuantity: "0",
+    UnitPrice: "",
+    ReorderLevel: "5",
+  });
+
+  const applyParts = (result) => {
+    const list = Array.isArray(result) ? result : [];
+    setParts(list);
+    setDrafts(Object.fromEntries(list.map((part) => [
+      String(part.PartID),
+      {
+        PartName: part.PartName || "",
+        UnitPrice: String(part.UnitPrice ?? ""),
+        ReorderLevel: String(part.ReorderLevel ?? 0),
+      },
+    ])));
+  };
+
+  const refreshParts = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.adminParts();
+      applyParts(result);
+    } catch (err) {
+      setError(err.message || "Could not load the inventory.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    api.adminParts()
+      .then((result) => {
+        if (!active) return;
+        const list = Array.isArray(result) ? result : [];
+        setParts(list);
+        setDrafts(Object.fromEntries(list.map((part) => [
+          String(part.PartID),
+          {
+            PartName: part.PartName || "",
+            UnitPrice: String(part.UnitPrice ?? ""),
+            ReorderLevel: String(part.ReorderLevel ?? 0),
+          },
+        ])));
+      })
+      .catch((err) => {
+        if (active) setError(err.message || "Could not load the inventory.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  if (!user || user.role !== "admin") {
+    return (
+      <section className="simple-state">
+        <span className="section-index">RESTRICTED AREA</span>
+        <h1>Inventory management</h1>
+        <p>Administrator access is required to manage workshop stock.</p>
+      </section>
+    );
+  }
+
+  const updateDraft = (partId, field, value) => {
+    setDrafts((current) => ({
+      ...current,
+      [String(partId)]: { ...current[String(partId)], [field]: value },
+    }));
+  };
+
+  const handleCreatePart = async (event) => {
+    event.preventDefault();
+    setFormError("");
+    setError("");
+    setNotice("");
+
+    const stock = Number(newPart.StockQuantity);
+    const price = Number(newPart.UnitPrice);
+    const reorder = Number(newPart.ReorderLevel);
+
+    if (!newPart.PartName.trim()) {
+      setFormError("Enter a part name.");
+      return;
+    }
+    if (!Number.isInteger(stock) || stock < 0) {
+      setFormError("Initial stock must be a non-negative whole number.");
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      setFormError("Enter a valid non-negative unit price.");
+      return;
+    }
+    if (!Number.isInteger(reorder) || reorder < 0) {
+      setFormError("Reorder level must be a non-negative whole number.");
+      return;
+    }
+
+    setSavingAction("create");
+    try {
+      const result = await api.createInventoryPart({
+        PartName: newPart.PartName.trim(),
+        StockQuantity: stock,
+        UnitPrice: price,
+        ReorderLevel: reorder,
+      });
+      setNotice(`Added ${result.PartName || newPart.PartName.trim()} to inventory.`);
+      setNewPart({ PartName: "", StockQuantity: "0", UnitPrice: "", ReorderLevel: "5" });
+      await refreshParts();
+    } catch (err) {
+      setFormError(err.message || "Could not add this part.");
+    } finally {
+      setSavingAction("");
+    }
+  };
+
+  const handleSavePart = async (partId) => {
+    const draft = drafts[String(partId)];
+    if (!draft) return;
+
+    const price = Number(draft.UnitPrice);
+    const reorder = Number(draft.ReorderLevel);
+    if (!draft.PartName.trim()) {
+      setError("Part name cannot be empty.");
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      setError("Unit price must be a valid non-negative number.");
+      return;
+    }
+    if (!Number.isInteger(reorder) || reorder < 0) {
+      setError("Reorder level must be a non-negative whole number.");
+      return;
+    }
+
+    setSavingAction(`save-${partId}`);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.updateInventoryPart(partId, {
+        PartName: draft.PartName.trim(),
+        UnitPrice: price,
+        ReorderLevel: reorder,
+      });
+      setNotice(result.message || "Part details updated.");
+      await refreshParts();
+    } catch (err) {
+      setError(err.message || "Could not update this part.");
+    } finally {
+      setSavingAction("");
+    }
+  };
+
+  const handleReceiveStock = async (partId) => {
+    const quantity = Number(restockAmounts[String(partId)]);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      setError("Enter a whole number greater than zero for stock received.");
+      return;
+    }
+
+    setSavingAction(`stock-${partId}`);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.receiveInventoryStock(partId, quantity);
+      setNotice(result.message || "Inventory stock received successfully.");
+      setRestockAmounts((current) => ({ ...current, [String(partId)]: "" }));
+      await refreshParts();
+    } catch (err) {
+      setError(err.message || "Could not update stock.");
+    } finally {
+      setSavingAction("");
+    }
+  };
+
+  const lowStockCount = parts.filter(
+    (part) => Number(part.StockQuantity) <= Number(part.ReorderLevel)
+  ).length;
+
+  return (
+    <section className="dashboard-page inventory-page">
+      <PageHeading
+        eyebrow="WORKSHOP OPERATIONS"
+        title={<>Inventory, under <em>control.</em></>}
+        description="Add spare parts, maintain prices and reorder thresholds, and record incoming stock. Inventory decreases automatically when a service is completed."
+        action={
+          <button className="button button-outline" type="button" onClick={refreshParts} disabled={loading}>
+            {loading ? "REFRESHING…" : "REFRESH INVENTORY ↻"}
+          </button>
+        }
+      />
+
+      {error && <ApiNotice text={error} />}
+      {notice && <p className="form-success" role="status">{notice}</p>}
+
+      <div className="stat-grid">
+        <Stat label="PART TYPES" value={parts.length} note="Items in the inventory catalogue" />
+        <Stat label="LOW STOCK" value={lowStockCount} note="At or below the reorder threshold" />
+        <Stat label="UNITS ON HAND" value={parts.reduce((sum, part) => sum + Number(part.StockQuantity || 0), 0)} note="Total counted units across all parts" />
+      </div>
+
+      <section className="panel inventory-create-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="section-index">INVENTORY CATALOGUE</span>
+            <h3>Add a spare part</h3>
+          </div>
+          <span className="panel-symbol">+</span>
+        </div>
+        <form className="form-stack" onSubmit={handleCreatePart}>
+          <div className="inventory-form-grid">
+            <label className="field">
+              <span>Part name</span>
+              <input required maxLength={100} value={newPart.PartName}
+                onChange={(event) => setNewPart((current) => ({ ...current, PartName: event.target.value }))}
+                placeholder="e.g. Oil Filter" />
+            </label>
+            <label className="field">
+              <span>Initial stock</span>
+              <input required type="number" min="0" step="1" value={newPart.StockQuantity}
+                onChange={(event) => setNewPart((current) => ({ ...current, StockQuantity: event.target.value }))} />
+            </label>
+            <label className="field">
+              <span>Unit price (₹)</span>
+              <input required type="number" min="0" step="0.01" value={newPart.UnitPrice}
+                onChange={(event) => setNewPart((current) => ({ ...current, UnitPrice: event.target.value }))}
+                placeholder="0.00" />
+            </label>
+            <label className="field">
+              <span>Reorder level</span>
+              <input required type="number" min="0" step="1" value={newPart.ReorderLevel}
+                onChange={(event) => setNewPart((current) => ({ ...current, ReorderLevel: event.target.value }))} />
+            </label>
+          </div>
+          {formError && <p className="form-error" role="alert">{formError}</p>}
+          <div className="estimate-actions">
+            <button className="button button-dark" type="submit" disabled={savingAction === "create"}>
+              {savingAction === "create" ? "ADDING PART…" : "ADD PART TO INVENTORY"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="panel inventory-list-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="section-index">STOCK CONTROL</span>
+            <h3>Parts and availability</h3>
+          </div>
+          <span className="muted">{parts.length} item{parts.length === 1 ? "" : "s"}</span>
+        </div>
+
+        {loading ? (
+          <p className="muted">Loading inventory…</p>
+        ) : parts.length === 0 ? (
+          <p className="muted">No parts found. Add your first spare part above.</p>
+        ) : (
+          <div className="inventory-parts-list">
+            {parts.map((part) => {
+              const draft = drafts[String(part.PartID)] || {
+                PartName: part.PartName,
+                UnitPrice: String(part.UnitPrice),
+                ReorderLevel: String(part.ReorderLevel),
+              };
+              const lowStock = Number(part.StockQuantity) <= Number(part.ReorderLevel);
+              return (
+                <article className="inventory-part-card" key={part.PartID}>
+                  <div className="inventory-part-heading">
+                    <div>
+                      <span className="section-index">PART #{part.PartID}</span>
+                      <h4>{part.PartName}</h4>
+                    </div>
+                    <span className={lowStock ? "inventory-stock-status is-low" : "inventory-stock-status"}>
+                      {lowStock ? "LOW STOCK" : "IN STOCK"}
+                    </span>
+                  </div>
+                  <div className="inventory-edit-grid">
+                    <label className="field">
+                      <span>Part name</span>
+                      <input maxLength={100} value={draft.PartName}
+                        onChange={(event) => updateDraft(part.PartID, "PartName", event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Unit price (₹)</span>
+                      <input type="number" min="0" step="0.01" value={draft.UnitPrice}
+                        onChange={(event) => updateDraft(part.PartID, "UnitPrice", event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Reorder level</span>
+                      <input type="number" min="0" step="1" value={draft.ReorderLevel}
+                        onChange={(event) => updateDraft(part.PartID, "ReorderLevel", event.target.value)} />
+                    </label>
+                    <div className="inventory-stock-count">
+                      <span>Current stock</span>
+                      <strong>{part.StockQuantity}</strong>
+                      <small>unit{Number(part.StockQuantity) === 1 ? "" : "s"} on hand</small>
+                    </div>
+                  </div>
+                  <div className="inventory-card-actions">
+                    <button className="button button-dark" type="button"
+                      disabled={savingAction === `save-${part.PartID}`}
+                      onClick={() => handleSavePart(part.PartID)}>
+                      {savingAction === `save-${part.PartID}` ? "SAVING…" : "SAVE DETAILS"}
+                    </button>
+                    <div className="inventory-restock-control">
+                      <label className="field">
+                        <span>Receive stock (units)</span>
+                        <input type="number" min="1" step="1"
+                          value={restockAmounts[String(part.PartID)] ?? ""}
+                          onChange={(event) => setRestockAmounts((current) => ({
+                            ...current, [String(part.PartID)]: event.target.value,
+                          }))}
+                          placeholder="Quantity received" />
+                      </label>
+                      <button className="button button-outline" type="button"
+                        disabled={savingAction === `stock-${part.PartID}`}
+                        onClick={() => handleReceiveStock(part.PartID)}>
+                        {savingAction === `stock-${part.PartID}` ? "UPDATING…" : "ADD STOCK"}
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </section>
   );
 }
 
