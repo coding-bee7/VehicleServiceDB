@@ -880,12 +880,12 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
     } finally { setCompletingServiceId(null); }
   };
 
-  const handleDecideEstimate = async (estimateId, decision) => {
+  const handleDecideEstimate = async (estimateId, decision, notes = "") => {
     setEstimateDecisionSavingId(estimateId);
     setCustomerEstimatesError("");
     setNotice("");
     try {
-      const result = await api.decideEstimate(estimateId, decision);
+      const result = await api.decideEstimate(estimateId, decision, notes);
       const refreshed = await api.customerEstimates();
       setCustomerEstimates(Array.isArray(refreshed) ? refreshed : []);
       setNotice(result.message || `Estimate ${decision.toLowerCase()}.`);
@@ -3371,6 +3371,26 @@ function CustomerEstimates({
   notice,
   onDecision,
 }) {
+  const [rejectingEstimateId, setRejectingEstimateId] = useState(null);
+  const [rejectionNotes, setRejectionNotes] = useState("");
+  const [rejectionError, setRejectionError] = useState("");
+
+  const submitRejection = async (event, estimateId) => {
+    event.preventDefault();
+    const notes = rejectionNotes.trim();
+    if (!notes) {
+      setRejectionError("Please explain what needs to be changed.");
+      return;
+    }
+
+    const succeeded = await onDecision(estimateId, "Rejected", notes);
+    if (succeeded) {
+      setRejectingEstimateId(null);
+      setRejectionNotes("");
+      setRejectionError("");
+    }
+  };
+
   return (
     <section className="dashboard-page">
       <PageHeading
@@ -3441,14 +3461,60 @@ function CustomerEstimates({
                     className="button button-outline"
                     disabled={savingId === estimate.EstimateID}
                     onClick={() => {
-                      if (window.confirm("Reject this estimate? The mechanic will need to revise the proposal before work can begin.")) {
-                        onDecision(estimate.EstimateID, "Rejected");
-                      }
+                      setRejectingEstimateId(estimate.EstimateID);
+                      setRejectionNotes("");
+                      setRejectionError("");
                     }}
                   >
                     REJECT
                   </button>
                 </div>
+                {rejectingEstimateId === estimate.EstimateID && (
+                  <form
+                    className="form-stack inspection-form"
+                    onSubmit={(event) => submitRejection(event, estimate.EstimateID)}
+                  >
+                    <label className="field">
+                      REASON FOR REJECTION
+                      <textarea
+                        required
+                        rows={3}
+                        maxLength={500}
+                        value={rejectionNotes}
+                        onChange={(event) => {
+                          setRejectionNotes(event.target.value);
+                          if (rejectionError) setRejectionError("");
+                        }}
+                        placeholder="Tell the mechanic what you would like changed..."
+                      />
+                      <small>Required · maximum 500 characters</small>
+                    </label>
+                    {rejectionError && (
+                      <p className="form-error" role="alert">{rejectionError}</p>
+                    )}
+                    <div className="estimate-actions">
+                      <button
+                        type="submit"
+                        className="button button-dark"
+                        disabled={savingId === estimate.EstimateID}
+                      >
+                        {savingId === estimate.EstimateID ? "SUBMITTING…" : "SUBMIT REJECTION"}
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-outline"
+                        disabled={savingId === estimate.EstimateID}
+                        onClick={() => {
+                          setRejectingEstimateId(null);
+                          setRejectionNotes("");
+                          setRejectionError("");
+                        }}
+                      >
+                        CANCEL
+                      </button>
+                    </div>
+                  </form>
+                )}
               ) : (
                 <p className="muted">Decision recorded: {estimate.Status}{estimate.DecisionAt ? ` on ${new Date(estimate.DecisionAt).toLocaleString()}` : ""}.</p>
               )}
@@ -3586,6 +3652,9 @@ function MechanicDashboard({
               <p className="muted">{service.Complaint || "General service"} · {service.AppointmentDate ? new Date(service.AppointmentDate).toLocaleString() : "Date not set"}</p>
               {service.EstimateStatus && (
                 <p className="muted">Estimate status: <strong>{service.EstimateStatus}</strong>{service.EstimateTotal != null ? ` · ₹${Number(service.EstimateTotal).toFixed(2)}` : ""}</p>
+              )}
+              {service.EstimateStatus === "Rejected" && service.EstimateCustomerNotes && (
+                <p className="muted"><strong>Customer's reason for rejection:</strong> {service.EstimateCustomerNotes}</p>
               )}
 
               {estimateServiceId === service.ServiceID && (
