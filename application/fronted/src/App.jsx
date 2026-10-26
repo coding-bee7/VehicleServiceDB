@@ -3186,32 +3186,36 @@ function AdminDashboard({
                       <td>
                         <div className="appointment-actions">
                           <select
-                            aria-label={`Status for appointment ${item.AppointmentID}`}
-                            defaultValue={
-                              item.AppointmentStatus ||
-                              item.Status ||
-                              item.status ||
-                              "Booked"
-                            }
-                            id={`appointment-status-${item.AppointmentID}`}
-                            disabled={
-                              updatingAppointmentId === item.AppointmentID
-                            }
-                          >
-                            <option value="Booked">Booked</option>
-                            <option value="Pending">Pending</option>
-                            <option value="Confirmed">Confirmed</option>
-                            <option value="In Progress">In Progress</option>
-                            <option value="Completed">Completed</option>
-                            <option value="Cancelled">Cancelled</option>
-                          </select>
+                             aria-label={`Status for appointment ${item.AppointmentID}`}
+                             defaultValue={
+                               item.AppointmentStatus ||
+                               item.Status ||
+                               item.status ||
+                               "Booked"
+                             }
+                             id={`appointment-status-${item.AppointmentID}`}
+                             disabled={
+                               updatingAppointmentId === item.AppointmentID ||
+                               ["In Progress", "Completed"].includes(item.ServiceStatus)
+                             }
+                           >
+                             <option value="Booked">Booked</option>
+                             <option value="Confirmed">Confirmed</option>
+                             <option value="Cancelled">Cancelled</option>
+                             {["Pending", "In Progress", "Completed"].includes(item.AppointmentStatus) && (
+                               <option value={item.AppointmentStatus} disabled>
+                                 {item.AppointmentStatus} (workflow-managed)
+                               </option>
+                             )}
+                           </select>
 
                           <button
                             type="button"
                             className="button button-dark"
                             disabled={
-                              updatingAppointmentId === item.AppointmentID
-                            }
+                               updatingAppointmentId === item.AppointmentID ||
+                               ["In Progress", "Completed"].includes(item.ServiceStatus)
+                             }
                             onClick={() => {
                               const select = document.getElementById(
                                 `appointment-status-${item.AppointmentID}`
