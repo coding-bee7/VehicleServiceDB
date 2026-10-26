@@ -2095,6 +2095,7 @@ def mechanic_services():
                 se.EstimateID,
                 se.Status AS EstimateStatus,
                 se.TotalAmount AS EstimateTotal,
+                se.CustomerNotes AS EstimateCustomerNotes,
                 si.Findings AS InspectionFindings,
                 si.Odometer AS InspectionOdometer,
                 si.RecommendedTasks
