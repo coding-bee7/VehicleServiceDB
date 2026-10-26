@@ -1726,3 +1726,149 @@ button {
     display: none !important;
   }
 }
+
+
+/* Inspection, estimate approval and actual parts workflow */
+.estimate-service-list {
+  display: grid;
+  gap: 18px;
+}
+.estimate-service-list > .panel {
+  min-width: 0;
+}
+.inspection-form {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid #e8ded2;
+}
+.inspection-form h3 {
+  margin: 0 0 4px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 27px;
+  font-weight: 400;
+}
+.estimate-parts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.estimate-part-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid #e2d7c9;
+  background: #fffcf7;
+  color: #5f4c3e;
+  font-size: 12px;
+}
+.estimate-part-choice > span {
+  display: grid;
+  gap: 5px;
+}
+.estimate-part-choice small {
+  color: #8a7a6b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.estimate-part-choice input {
+  width: 78px;
+  min-width: 60px;
+  min-height: 40px;
+  padding: 9px;
+  border: 1px solid #ded1c2;
+  background: #faf6f0;
+  color: #30251f;
+  font: inherit;
+}
+.estimate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+}
+.button-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 12px 17px;
+  color: #4a3428;
+  background: transparent;
+  border: 1px solid #b69a7d;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  cursor: pointer;
+}
+.button-outline:hover {
+  background: #f5ead9;
+}
+.estimate-detail {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 22px;
+  margin: 20px 0;
+}
+.estimate-detail p {
+  margin: 0;
+  color: #77695e;
+  font-size: 12px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.estimate-detail strong {
+  display: inline-block;
+  margin-bottom: 4px;
+  color: #4a3428;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+}
+.estimate-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #e2d7c9;
+}
+.estimate-total span {
+  color: #8b7967;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.estimate-total strong {
+  color: #4a3428;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 28px;
+  font-weight: 400;
+}
+.actual-parts-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #e8ded2;
+}
+@media (max-width: 760px) {
+  .estimate-parts-grid,
+  .estimate-detail {
+    grid-template-columns: 1fr;
+  }
+  .estimate-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .estimate-actions .button,
+  .estimate-actions .button-outline {
+    width: 100%;
+  }
+  .estimate-part-choice input {
+    width: 72px;
+  }
+}
