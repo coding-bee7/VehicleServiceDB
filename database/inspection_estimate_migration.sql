@@ -83,3 +83,19 @@ SET @actual_sql = IF(
 PREPARE actual_stmt FROM @actual_sql;
 EXECUTE actual_stmt;
 DEALLOCATE PREPARE actual_stmt;
+
+-- Store the mechanic's actual work performed with the final service record.
+SET @has_work_performed = (
+  SELECT COUNT(*) FROM information_schema.columns
+  WHERE table_schema = DATABASE()
+    AND table_name = 'ServiceRecord'
+    AND column_name = 'WorkPerformed'
+);
+SET @work_sql = IF(
+  @has_work_performed = 0,
+  'ALTER TABLE ServiceRecord ADD COLUMN WorkPerformed TEXT NULL',
+  'SELECT 1'
+);
+PREPARE work_stmt FROM @work_sql;
+EXECUTE work_stmt;
+DEALLOCATE PREPARE work_stmt;
