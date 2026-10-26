@@ -844,6 +844,205 @@ def admin_dashboard():
         return error_response("Could not load admin dashboard", 500)
 
 
+
+# ---------------- ADMIN INVENTORY MANAGEMENT ----------------
+
+@app.get("/api/admin/parts")
+@role_required("Admin")
+def admin_parts():
+    try:
+        parts = fetch_all("""
+            SELECT PartID, PartName, StockQuantity, UnitPrice, ReorderLevel
+            FROM Part
+            ORDER BY PartName
+        """)
+        for part in parts:
+            part["LowStock"] = part["StockQuantity"] <= part["ReorderLevel"]
+        return jsonify(parts)
+    except Error:
+        app.logger.exception("Could not retrieve parts inventory")
+        return error_response("Could not retrieve parts inventory", 500)
+
+
+@app.post("/api/admin/parts")
+@role_required("Admin")
+def create_inventory_part():
+    data = read_json()
+    if data is None:
+        return error_response("Send a valid JSON object", 400)
+
+    name = data.get("PartName")
+    stock = data.get("StockQuantity", 0)
+    reorder_level = data.get("ReorderLevel", 5)
+
+    if not isinstance(name, str) or not name.strip():
+        return error_response("Part name is required", 400)
+    name = name.strip()
+    if len(name) > 100:
+        return error_response("Part name must be at most 100 characters", 400)
+
+    if isinstance(stock, bool) or not isinstance(stock, int) or stock < 0:
+        return error_response("Initial stock must be a non-negative whole number", 400)
+    if isinstance(reorder_level, bool) or not isinstance(reorder_level, int) or reorder_level < 0:
+        return error_response("Reorder level must be a non-negative whole number", 400)
+
+    try:
+        price = Decimal(str(data.get("UnitPrice")))
+    except Exception:
+        return error_response("Unit price must be a valid number", 400)
+    if not price.is_finite() or price < 0 or price > Decimal("99999999.99"):
+        return error_response("Unit price must be between 0 and 99999999.99", 400)
+
+    connection = None
+    cursor = None
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+        cursor.execute("""
+            INSERT INTO Part (PartName, StockQuantity, UnitPrice, ReorderLevel)
+            VALUES (%s, %s, %s, %s)
+        """, (name, stock, price, reorder_level))
+        part_id = cursor.lastrowid
+        connection.commit()
+        part = fetch_one("""
+            SELECT PartID, PartName, StockQuantity, UnitPrice, ReorderLevel
+            FROM Part WHERE PartID = %s
+        """, (part_id,))
+        part["LowStock"] = part["StockQuantity"] <= part["ReorderLevel"]
+        return jsonify(part), 201
+    except IntegrityError:
+        if connection and connection.is_connected():
+            connection.rollback()
+        return error_response("A part with this name already exists", 409)
+    except Error:
+        if connection and connection.is_connected():
+            connection.rollback()
+        app.logger.exception("Could not create inventory part")
+        return error_response("Could not create inventory part", 500)
+    finally:
+        if cursor:
+            cursor.close()
+        if connection and connection.is_connected():
+            connection.close()
+
+
+@app.patch("/api/admin/parts/<int:part_id>")
+@role_required("Admin")
+def update_inventory_part(part_id):
+    data = read_json()
+    if data is None:
+        return error_response("Send a valid JSON object", 400)
+
+    name = data.get("PartName")
+    reorder_level = data.get("ReorderLevel")
+    if not isinstance(name, str) or not name.strip():
+        return error_response("Part name is required", 400)
+    name = name.strip()
+    if len(name) > 100:
+        return error_response("Part name must be at most 100 characters", 400)
+    if isinstance(reorder_level, bool) or not isinstance(reorder_level, int) or reorder_level < 0:
+        return error_response("Reorder level must be a non-negative whole number", 400)
+
+    try:
+        price = Decimal(str(data.get("UnitPrice")))
+    except Exception:
+        return error_response("Unit price must be a valid number", 400)
+    if not price.is_finite() or price < 0 or price > Decimal("99999999.99"):
+        return error_response("Unit price must be between 0 and 99999999.99", 400)
+
+    connection = None
+    cursor = None
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+        cursor.execute("""
+            UPDATE Part
+            SET PartName = %s, UnitPrice = %s, ReorderLevel = %s
+            WHERE PartID = %s
+        """, (name, price, reorder_level, part_id))
+        if cursor.rowcount == 0:
+            cursor.execute("SELECT PartID FROM Part WHERE PartID = %s", (part_id,))
+            if cursor.fetchone() is None:
+                connection.rollback()
+                return error_response("Part not found", 404)
+        connection.commit()
+        part = fetch_one("""
+            SELECT PartID, PartName, StockQuantity, UnitPrice, ReorderLevel
+            FROM Part WHERE PartID = %s
+        """, (part_id,))
+        part["LowStock"] = part["StockQuantity"] <= part["ReorderLevel"]
+        return jsonify({"message": "Part details updated successfully", "part": part})
+    except IntegrityError:
+        if connection and connection.is_connected():
+            connection.rollback()
+        return error_response("A part with this name already exists", 409)
+    except Error:
+        if connection and connection.is_connected():
+            connection.rollback()
+        app.logger.exception("Could not update inventory part")
+        return error_response("Could not update inventory part", 500)
+    finally:
+        if cursor:
+            cursor.close()
+        if connection and connection.is_connected():
+            connection.close()
+
+
+@app.post("/api/admin/parts/<int:part_id>/stock")
+@role_required("Admin")
+def receive_inventory_stock(part_id):
+    data = read_json()
+    if data is None:
+        return error_response("Send a valid JSON object", 400)
+
+    quantity = data.get("Quantity")
+    if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+        return error_response("Quantity received must be a positive whole number", 400)
+
+    connection = None
+    cursor = None
+    try:
+        connection = get_connection()
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT PartID, StockQuantity FROM Part WHERE PartID = %s FOR UPDATE",
+            (part_id,)
+        )
+        part = cursor.fetchone()
+        if part is None:
+            connection.rollback()
+            return error_response("Part not found", 404)
+        new_quantity = part["StockQuantity"] + quantity
+        if new_quantity > 2147483647:
+            connection.rollback()
+            return error_response("Resulting stock quantity is too large", 400)
+        cursor.execute(
+            "UPDATE Part SET StockQuantity = %s WHERE PartID = %s",
+            (new_quantity, part_id)
+        )
+        connection.commit()
+        updated = fetch_one("""
+            SELECT PartID, PartName, StockQuantity, UnitPrice, ReorderLevel
+            FROM Part WHERE PartID = %s
+        """, (part_id,))
+        updated["LowStock"] = updated["StockQuantity"] <= updated["ReorderLevel"]
+        return jsonify({
+            "message": f"Stock updated. Added {quantity} unit(s).",
+            "part": updated
+        })
+    except Error:
+        if connection and connection.is_connected():
+            connection.rollback()
+        app.logger.exception("Could not receive inventory stock")
+        return error_response("Could not receive inventory stock", 500)
+    finally:
+        if cursor:
+            cursor.close()
+        if connection and connection.is_connected():
+            connection.close()
+
+
 # ---------------- ADMIN APPOINTMENTS ----------------
 
 @app.get("/api/admin/appointments")
