@@ -3449,6 +3449,7 @@ function CustomerEstimates({
                 <strong>₹{Number(estimate.TotalAmount || 0).toFixed(2)}</strong>
               </div>
               {estimate.Status === "Proposed" ? (
+                <>
                 <div className="estimate-actions">
                   <button
                     className="button button-dark"
@@ -3515,6 +3516,7 @@ function CustomerEstimates({
                     </div>
                   </form>
                 )}
+                </>
               ) : (
                 <p className="muted">Decision recorded: {estimate.Status}{estimate.DecisionAt ? ` on ${new Date(estimate.DecisionAt).toLocaleString()}` : ""}.</p>
               )}
