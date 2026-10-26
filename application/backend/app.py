@@ -2488,6 +2488,8 @@ def complete_service(service_id):
     claims = get_jwt()
     role = claims.get("role")
     employee_id = claims.get("employee_id")
+    completion_data = read_json() or {}
+    work_performed = completion_data.get("WorkPerformed")
 
     connection = None
     cursor = None
@@ -2558,6 +2560,12 @@ def complete_service(service_id):
                 "Record and confirm the actual parts used before completing the service",
                 409
             )
+        if not isinstance(work_performed, str) or not work_performed.strip():
+            connection.rollback()
+            return error_response("Describe the actual work performed before completing the service", 400)
+        if len(work_performed.strip()) > 4000:
+            connection.rollback()
+            return error_response("Work performed must be at most 4000 characters", 400)
 
         # Lock the not-yet-deducted usage records.
         cursor.execute("""
@@ -2667,9 +2675,10 @@ def complete_service(service_id):
         cursor.execute("""
             UPDATE ServiceRecord
             SET Status = 'Completed',
+                WorkPerformed = %s,
                 EndDate = COALESCE(EndDate, CURRENT_TIMESTAMP)
             WHERE ServiceID = %s
-        """, (service_id,))
+        """, (work_performed.strip(), service_id))
 
         cursor.execute("""
             UPDATE Appointment
