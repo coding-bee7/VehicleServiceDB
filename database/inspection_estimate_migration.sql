@@ -66,3 +66,20 @@ SET @stock_sql = IF(
 PREPARE stock_stmt FROM @stock_sql;
 EXECUTE stock_stmt;
 DEALLOCATE PREPARE stock_stmt;
+
+
+-- Prevent completion until the mechanic confirms actual parts consumed.
+SET @has_actual_confirmed = (
+  SELECT COUNT(*) FROM information_schema.columns
+  WHERE table_schema = DATABASE()
+    AND table_name = 'ServiceRecord'
+    AND column_name = 'ActualPartsConfirmed'
+);
+SET @actual_sql = IF(
+  @has_actual_confirmed = 0,
+  'ALTER TABLE ServiceRecord ADD COLUMN ActualPartsConfirmed BOOLEAN NOT NULL DEFAULT FALSE',
+  'SELECT 1'
+);
+PREPARE actual_stmt FROM @actual_sql;
+EXECUTE actual_stmt;
+DEALLOCATE PREPARE actual_stmt;
