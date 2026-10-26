@@ -448,6 +448,7 @@ def list_services():
 
 
 @app.patch("/api/services/<int:service_id>/status")
+@role_required("Admin")
 def update_service_status(service_id):
     data = read_json()
     if data is None:
@@ -459,6 +460,14 @@ def update_service_status(service_id):
     if not isinstance(status, str) or status not in allowed_statuses:
         return error_response(
             "Status must be Pending, In Progress, or Completed", 400
+        )
+    if status == "Completed":
+        return error_response(
+            "Use the transactional service-completion endpoint to complete work", 409
+        )
+    if status == "In Progress":
+        return error_response(
+            "Mechanic start is allowed only through the approved-estimate workflow", 409
         )
 
     connection = None
@@ -513,6 +522,300 @@ def update_service_status(service_id):
             connection.rollback()
         app.logger.exception("Could not update service status")
         return error_response("Could not update service status", 500)
+    finally:
+        if cursor:
+            cursor.close()
+        if connection and connection.is_connected():
+            connection.close()
+
+
+
+# ---------------- INSPECTION AND CUSTOMER ESTIMATE APPROVAL ----------------
+
+@app.get("/api/mechanic/parts")
+@role_required("Mechanic")
+def mechanic_parts():
+    try:
+        return jsonify(fetch_all("""
+            SELECT PartID, PartName, StockQuantity, UnitPrice
+            FROM Part ORDER BY PartName
+        """))
+    except Error:
+        app.logger.exception("Could not retrieve spare parts")
+        return error_response("Could not retrieve spare parts", 500)
+
+
+@app.post("/api/services/<int:service_id>/estimate")
+@role_required("Mechanic")
+def create_service_estimate(service_id):
+    employee_id = get_jwt().get("employee_id")
+    if employee_id is None:
+        return error_response("Mechanic account is not linked to an employee profile", 403)
+    data = read_json()
+    if data is None:
+        return error_response("Send a valid JSON object", 400)
+
+    findings = data.get("Findings")
+    recommended_tasks = data.get("RecommendedTasks")
+    labor_description = data.get("LaborDescription")
+    odometer = data.get("Odometer")
+    try:
+        labor_cost = Decimal(str(data.get("LaborCost")))
+    except Exception:
+        return error_response("Labour cost must be a valid number", 400)
+    raw_parts = data.get("Parts", [])
+    if not isinstance(findings, str) or not findings.strip():
+        return error_response("Inspection findings are required", 400)
+    if not isinstance(recommended_tasks, str) or not recommended_tasks.strip():
+        return error_response("Recommended tasks are required", 400)
+    if not isinstance(labor_description, str) or not labor_description.strip():
+        return error_response("Labour description is required", 400)
+    if not labor_cost.is_finite() or labor_cost < 0 or labor_cost > Decimal("99999999.99"):
+        return error_response("Labour cost must be between 0 and 99999999.99", 400)
+    if odometer not in (None, ""):
+        if not str(odometer).isdigit() or int(odometer) < 0:
+            return error_response("Odometer must be a non-negative integer", 400)
+        odometer = int(odometer)
+    else:
+        odometer = None
+    if not isinstance(raw_parts, list):
+        return error_response("Parts must be a list", 400)
+
+    requested_parts, seen = [], set()
+    for item in raw_parts:
+        if not isinstance(item, dict):
+            return error_response("Each part must include PartID and Quantity", 400)
+        part_id, quantity = item.get("PartID"), item.get("Quantity")
+        if not isinstance(part_id, int) or isinstance(part_id, bool) or part_id <= 0:
+            return error_response("PartID must be a positive integer", 400)
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
+            return error_response("Part quantity must be a positive integer", 400)
+        if part_id in seen:
+            return error_response("A part can only appear once in an estimate", 400)
+        seen.add(part_id)
+        requested_parts.append((part_id, quantity))
+
+    connection = None
+    cursor = None
+    try:
+        connection = get_connection()
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT ServiceID, MechanicID, Status FROM ServiceRecord
+            WHERE ServiceID = %s FOR UPDATE
+        """, (service_id,))
+        service = cursor.fetchone()
+        if service is None:
+            connection.rollback()
+            return error_response("Service record not found", 404)
+        if service["MechanicID"] != int(employee_id):
+            connection.rollback()
+            return error_response("You are not assigned to this service", 403)
+        if service["Status"] != "Pending":
+            connection.rollback()
+            return error_response("Estimates can only be submitted before work starts", 409)
+
+        cursor.execute("""
+            SELECT EstimateID, Status FROM ServiceEstimate
+            WHERE ServiceID = %s FOR UPDATE
+        """, (service_id,))
+        existing = cursor.fetchone()
+        if existing and existing["Status"] == "Approved":
+            connection.rollback()
+            return error_response("An approved estimate cannot be changed", 409)
+
+        parts, parts_cost = [], Decimal("0")
+        for part_id, quantity in requested_parts:
+            cursor.execute("""
+                SELECT PartID, PartName, StockQuantity, UnitPrice
+                FROM Part WHERE PartID = %s FOR UPDATE
+            """, (part_id,))
+            part = cursor.fetchone()
+            if part is None:
+                connection.rollback()
+                return error_response(f"Part {part_id} was not found", 404)
+            if part["StockQuantity"] < quantity:
+                connection.rollback()
+                return error_response(
+                    f"Insufficient stock for {part['PartName']}: available {part['StockQuantity']}, requested {quantity}",
+                    409
+                )
+            unit_price = Decimal(str(part["UnitPrice"]))
+            parts_cost += unit_price * quantity
+            parts.append((part_id, part["PartName"], quantity, unit_price))
+
+        total = labor_cost + parts_cost
+        cursor.execute("""
+            INSERT INTO ServiceInspection
+                (ServiceID, MechanicID, Findings, Odometer, RecommendedTasks)
+            VALUES (%s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                MechanicID = VALUES(MechanicID),
+                Findings = VALUES(Findings),
+                Odometer = VALUES(Odometer),
+                RecommendedTasks = VALUES(RecommendedTasks),
+                InspectionDate = CURRENT_TIMESTAMP
+        """, (service_id, int(employee_id), findings.strip(), odometer, recommended_tasks.strip()))
+
+        if existing:
+            estimate_id = existing["EstimateID"]
+            cursor.execute("""
+                UPDATE ServiceEstimate
+                SET Status = 'Proposed', LaborDescription = %s, LaborCost = %s,
+                    PartsCost = %s, TotalAmount = %s, DecisionAt = NULL,
+                    DecisionByCustomerID = NULL, CustomerNotes = NULL,
+                    CreatedAt = CURRENT_TIMESTAMP
+                WHERE EstimateID = %s
+            """, (labor_description.strip(), labor_cost, parts_cost, total, estimate_id))
+            cursor.execute("DELETE FROM ServiceEstimatePart WHERE EstimateID = %s", (estimate_id,))
+        else:
+            cursor.execute("""
+                INSERT INTO ServiceEstimate
+                    (ServiceID, Status, LaborDescription, LaborCost, PartsCost, TotalAmount)
+                VALUES (%s, 'Proposed', %s, %s, %s, %s)
+            """, (service_id, labor_description.strip(), labor_cost, parts_cost, total))
+            estimate_id = cursor.lastrowid
+
+        for part_id, part_name, quantity, unit_price in parts:
+            cursor.execute("""
+                INSERT INTO ServiceEstimatePart
+                    (EstimateID, PartID, PartName, Quantity, UnitPrice)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (estimate_id, part_id, part_name, quantity, unit_price))
+        connection.commit()
+        return jsonify({
+            "message": "Inspection saved and estimate submitted for customer approval",
+            "service_id": service_id,
+            "estimate_id": estimate_id,
+            "status": "Proposed",
+            "total_amount": str(total)
+        }), 201
+    except Error:
+        if connection and connection.is_connected():
+            connection.rollback()
+        app.logger.exception("Could not submit service estimate")
+        return error_response("Could not submit service estimate", 500)
+    finally:
+        if cursor:
+            cursor.close()
+        if connection and connection.is_connected():
+            connection.close()
+
+
+@app.get("/api/customer/estimates")
+@jwt_required()
+def customer_estimates():
+    claims = get_jwt()
+    if claims.get("role") != "Customer":
+        return error_response("Customer access required", 403)
+    customer_id = claims.get("customer_id")
+    if customer_id is None:
+        return error_response("Customer account is not linked to a customer profile", 403)
+    try:
+        estimates = fetch_all("""
+            SELECT se.EstimateID, se.ServiceID, se.Status, se.LaborDescription,
+                   se.LaborCost, se.PartsCost, se.TotalAmount, se.CreatedAt,
+                   se.DecisionAt, se.CustomerNotes, si.Findings, si.Odometer,
+                   si.RecommendedTasks, a.AppointmentDate, a.Complaint,
+                   v.RegistrationNo, v.Brand, v.Model
+            FROM ServiceEstimate se
+            JOIN ServiceRecord sr ON sr.ServiceID = se.ServiceID
+            JOIN Appointment a ON a.AppointmentID = sr.AppointmentID
+            JOIN Vehicle v ON v.VehicleID = a.VehicleID
+            JOIN ServiceInspection si ON si.ServiceID = sr.ServiceID
+            WHERE v.CustomerID = %s
+            ORDER BY se.CreatedAt DESC
+        """, (int(customer_id),))
+        for estimate in estimates:
+            estimate["Parts"] = fetch_all("""
+                SELECT PartID, PartName, Quantity, UnitPrice
+                FROM ServiceEstimatePart WHERE EstimateID = %s ORDER BY PartName
+            """, (estimate["EstimateID"],))
+        return jsonify(estimates)
+    except Error:
+        app.logger.exception("Could not retrieve customer estimates")
+        return error_response("Could not retrieve customer estimates", 500)
+
+
+@app.post("/api/customer/estimates/<int:estimate_id>/decision")
+@jwt_required()
+def decide_service_estimate(estimate_id):
+    claims = get_jwt()
+    if claims.get("role") != "Customer":
+        return error_response("Customer access required", 403)
+    customer_id = claims.get("customer_id")
+    if customer_id is None:
+        return error_response("Customer account is not linked to a customer profile", 403)
+    data = read_json()
+    if data is None:
+        return error_response("Send a valid JSON object", 400)
+    decision, notes = data.get("Decision"), data.get("Notes")
+    if decision not in ("Approved", "Rejected"):
+        return error_response("Decision must be Approved or Rejected", 400)
+    if notes is not None and (not isinstance(notes, str) or len(notes) > 500):
+        return error_response("Notes must be at most 500 characters", 400)
+
+    connection = None
+    cursor = None
+    try:
+        connection = get_connection()
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT se.EstimateID, se.Status AS EstimateStatus,
+                   sr.Status AS ServiceStatus, v.CustomerID
+            FROM ServiceEstimate se
+            JOIN ServiceRecord sr ON sr.ServiceID = se.ServiceID
+            JOIN Appointment a ON a.AppointmentID = sr.AppointmentID
+            JOIN Vehicle v ON v.VehicleID = a.VehicleID
+            WHERE se.EstimateID = %s FOR UPDATE
+        """, (estimate_id,))
+        estimate = cursor.fetchone()
+        if estimate is None or estimate["CustomerID"] != int(customer_id):
+            connection.rollback()
+            return error_response("Estimate not found for this customer", 404)
+        if estimate["ServiceStatus"] != "Pending":
+            connection.rollback()
+            return error_response("This service has already started; estimate decision is locked", 409)
+        if estimate["EstimateStatus"] != "Proposed":
+            connection.rollback()
+            return error_response("Only proposed estimates can be approved or rejected", 409)
+
+        if decision == "Approved":
+            cursor.execute("""
+                SELECT PartID, Quantity FROM ServiceEstimatePart
+                WHERE EstimateID = %s ORDER BY PartID FOR UPDATE
+            """, (estimate_id,))
+            items = cursor.fetchall()
+            for item in items:
+                cursor.execute("""
+                    SELECT PartName, StockQuantity FROM Part
+                    WHERE PartID = %s FOR UPDATE
+                """, (item["PartID"],))
+                part = cursor.fetchone()
+                if part is None or part["StockQuantity"] < item["Quantity"]:
+                    connection.rollback()
+                    return error_response(
+                        "Stock changed after the estimate was prepared; ask the mechanic to revise it",
+                        409
+                    )
+        cursor.execute("""
+            UPDATE ServiceEstimate
+            SET Status = %s, DecisionAt = CURRENT_TIMESTAMP,
+                DecisionByCustomerID = %s, CustomerNotes = %s
+            WHERE EstimateID = %s AND Status = 'Proposed'
+        """, (decision, int(customer_id), (notes or "").strip() or None, estimate_id))
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return error_response("Estimate decision was changed; refresh and retry", 409)
+        connection.commit()
+        return jsonify({"message": f"Estimate {decision.lower()} successfully", "estimate_id": estimate_id, "status": decision})
+    except Error:
+        if connection and connection.is_connected():
+            connection.rollback()
+        app.logger.exception("Could not record estimate decision")
+        return error_response("Could not record estimate decision", 500)
     finally:
         if cursor:
             cursor.close()
@@ -1860,10 +2163,18 @@ def mechanic_services():
                 v.RegistrationNo,
                 v.Brand,
                 v.Model,
-                c.Name AS CustomerName
+                c.Name AS CustomerName,
+                se.EstimateID,
+                se.Status AS EstimateStatus,
+                se.TotalAmount AS EstimateTotal,
+                si.Findings AS InspectionFindings,
+                si.Odometer AS InspectionOdometer,
+                si.RecommendedTasks
             FROM ServiceRecord sr
             JOIN Appointment a
                 ON a.AppointmentID = sr.AppointmentID
+            LEFT JOIN ServiceEstimate se ON se.ServiceID = sr.ServiceID
+            LEFT JOIN ServiceInspection si ON si.ServiceID = sr.ServiceID
             JOIN Vehicle v
                 ON v.VehicleID = a.VehicleID
             JOIN Customer c
@@ -1928,12 +2239,52 @@ def start_service(service_id):
                 403
             )
 
+        cursor.execute("""
+            SELECT EstimateID, Status FROM ServiceEstimate
+            WHERE ServiceID = %s FOR UPDATE
+        """, (service_id,))
+        estimate = cursor.fetchone()
+        if estimate is None or estimate["Status"] != "Approved":
+            connection.rollback()
+            return error_response(
+                "Customer approval is required before work can start", 409
+            )
+
         if service["Status"] != "Pending":
             connection.rollback()
             return error_response(
-                "Only Pending services can be started",
-                409
+                "Only Pending services can be started", 409
             )
+
+        cursor.execute("""
+            SELECT PartID, Quantity, UnitPrice
+            FROM ServiceEstimatePart
+            WHERE EstimateID = %s
+            ORDER BY PartID
+            FOR UPDATE
+        """, (estimate["EstimateID"],))
+        approved_parts = cursor.fetchall()
+        for item in approved_parts:
+            cursor.execute("""
+                SELECT PartName, StockQuantity FROM Part
+                WHERE PartID = %s FOR UPDATE
+            """, (item["PartID"],))
+            part = cursor.fetchone()
+            if part is None or part["StockQuantity"] < item["Quantity"]:
+                connection.rollback()
+                return error_response(
+                    "Insufficient stock for approved part: " +
+                    (part["PartName"] if part else str(item["PartID"])), 409
+                )
+            cursor.execute("""
+                INSERT INTO PartUsage
+                    (ServiceID, PartID, QuantityUsed, UnitPrice, StockDeducted)
+                VALUES (%s, %s, %s, %s, FALSE)
+                ON DUPLICATE KEY UPDATE
+                    QuantityUsed = VALUES(QuantityUsed),
+                    UnitPrice = VALUES(UnitPrice),
+                    StockDeducted = FALSE
+            """, (service_id, item["PartID"], item["Quantity"], item["UnitPrice"]))
 
         cursor.execute("""
             UPDATE ServiceRecord
@@ -1950,12 +2301,8 @@ def start_service(service_id):
                 409
             )
 
-        cursor.execute("""
-            UPDATE Appointment
-            SET Status = 'In Progress'
-            WHERE AppointmentID = %s
-        """, (service["AppointmentID"],))
-
+        # Appointment's current CHECK constraint excludes In Progress.
+        # ServiceRecord is the source of truth until final completion.
         connection.commit()
 
         return jsonify({
@@ -2126,6 +2473,14 @@ def complete_service(service_id):
             WHERE ServiceID = %s
         """, (service_id,))
         labor_total = cursor.fetchone()["LaborTotal"]
+        if not labor_total or Decimal(str(labor_total)) == Decimal("0"):
+            cursor.execute("""
+                SELECT LaborCost FROM ServiceEstimate
+                WHERE ServiceID = %s AND Status = 'Approved'
+            """, (service_id,))
+            estimate_labor = cursor.fetchone()
+            if estimate_labor and estimate_labor["LaborCost"] is not None:
+                labor_total = estimate_labor["LaborCost"]
 
         cursor.execute("""
             SELECT COALESCE(SUM(QuantityUsed * UnitPrice), 0)
