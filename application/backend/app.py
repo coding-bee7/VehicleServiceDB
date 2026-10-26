@@ -2324,6 +2324,126 @@ def start_service(service_id):
             connection.close()
 
 
+
+@app.post("/api/services/<int:service_id>/actual-parts")
+@role_required("Mechanic")
+def record_actual_parts(service_id):
+    claims = get_jwt()
+    employee_id = claims.get("employee_id")
+    if employee_id is None:
+        return error_response("Mechanic account is not linked to an employee profile", 403)
+    data = read_json()
+    if data is None or not isinstance(data.get("Parts"), list):
+        return error_response("Parts must be provided as a list", 400)
+
+    actual = []
+    seen = set()
+    for item in data["Parts"]:
+        if not isinstance(item, dict):
+            return error_response("Each part must include PartID and Quantity", 400)
+        part_id, quantity = item.get("PartID"), item.get("Quantity")
+        if not isinstance(part_id, int) or isinstance(part_id, bool) or part_id <= 0:
+            return error_response("PartID must be a positive integer", 400)
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 0:
+            return error_response("Actual quantity must be a non-negative integer", 400)
+        if part_id in seen:
+            return error_response("Each part may only appear once", 400)
+        seen.add(part_id)
+        actual.append((part_id, quantity))
+
+    connection = None
+    cursor = None
+    try:
+        connection = get_connection()
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT ServiceID, MechanicID, Status
+            FROM ServiceRecord WHERE ServiceID = %s FOR UPDATE
+        """, (service_id,))
+        service = cursor.fetchone()
+        if service is None:
+            connection.rollback()
+            return error_response("Service record not found", 404)
+        if service["MechanicID"] != int(employee_id):
+            connection.rollback()
+            return error_response("You are not assigned to this service", 403)
+        if service["Status"] != "In Progress":
+            connection.rollback()
+            return error_response("Actual parts can only be recorded while work is in progress", 409)
+
+        cursor.execute("""
+            SELECT se.EstimateID
+            FROM ServiceEstimate se
+            WHERE se.ServiceID = %s AND se.Status = 'Approved'
+            FOR UPDATE
+        """, (service_id,))
+        approved = cursor.fetchone()
+        if approved is None:
+            connection.rollback()
+            return error_response("An approved estimate is required", 409)
+
+        cursor.execute("""
+            SELECT PartID, Quantity
+            FROM ServiceEstimatePart
+            WHERE EstimateID = %s
+            ORDER BY PartID FOR UPDATE
+        """, (approved["EstimateID"],))
+        approved_parts = {row["PartID"]: row["Quantity"] for row in cursor.fetchall()}
+        for part_id, quantity in actual:
+            if part_id not in approved_parts:
+                connection.rollback()
+                return error_response("Actual parts must be included in the approved estimate", 409)
+            if quantity > approved_parts[part_id]:
+                connection.rollback()
+                return error_response(
+                    "Actual quantity exceeds the approved estimate; a revised customer approval is required",
+                    409
+                )
+            cursor.execute("""
+                UPDATE PartUsage
+                SET QuantityUsed = %s, StockDeducted = FALSE
+                WHERE ServiceID = %s AND PartID = %s
+            """, (quantity, service_id, part_id))
+            if cursor.rowcount == 0 and quantity > 0:
+                cursor.execute("""
+                    SELECT UnitPrice FROM ServiceEstimatePart
+                    WHERE EstimateID = %s AND PartID = %s
+                """, (approved["EstimateID"], part_id))
+                estimate_part = cursor.fetchone()
+                cursor.execute("""
+                    INSERT INTO PartUsage
+                        (ServiceID, PartID, QuantityUsed, UnitPrice, StockDeducted)
+                    VALUES (%s, %s, %s, %s, FALSE)
+                """, (service_id, part_id, quantity, estimate_part["UnitPrice"]))
+
+        # If a prefilled approved part is omitted, it was not used.
+        for part_id in approved_parts:
+            if part_id not in seen:
+                cursor.execute("""
+                    DELETE FROM PartUsage
+                    WHERE ServiceID = %s AND PartID = %s AND StockDeducted = FALSE
+                """, (service_id, part_id))
+
+        cursor.execute("""
+            UPDATE ServiceRecord
+            SET ActualPartsConfirmed = TRUE
+            WHERE ServiceID = %s
+        """, (service_id,))
+        connection.commit()
+        return jsonify({"message": "Actual parts used recorded", "service_id": service_id})
+    except Error:
+        if connection and connection.is_connected():
+            connection.rollback()
+        app.logger.exception("Could not record actual parts")
+        return error_response("Could not record actual parts", 500)
+    finally:
+        if cursor:
+            cursor.close()
+        if connection and connection.is_connected():
+            connection.close()
+
+
 # ---------------- TRANSACTIONAL SERVICE COMPLETION ----------------
 
 @app.post("/api/services/<int:service_id>/complete")
@@ -2344,7 +2464,7 @@ def complete_service(service_id):
         # Lock the service so two completion requests cannot process it
         # simultaneously.
         cursor.execute("""
-            SELECT ServiceID, AppointmentID, MechanicID, Status
+            SELECT ServiceID, AppointmentID, MechanicID, Status, ActualPartsConfirmed
             FROM ServiceRecord
             WHERE ServiceID = %s
             FOR UPDATE
@@ -2394,6 +2514,12 @@ def complete_service(service_id):
             connection.rollback()
             return error_response(
                 "Only services with status In Progress can be completed",
+                409
+            )
+        if not service.get("ActualPartsConfirmed"):
+            connection.rollback()
+            return error_response(
+                "Record and confirm the actual parts used before completing the service",
                 409
             )
 
