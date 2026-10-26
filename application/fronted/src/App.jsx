@@ -3524,7 +3524,7 @@ function MechanicDashboard({
       ...current,
       [service.ServiceID]: Object.fromEntries((service.EstimateParts || []).map((part) => [
         part.PartID,
-        saved[part.PartID] ?? part.Quantity,
+        saved[part.PartID] ?? (service.ActualPartsConfirmed ? 0 : part.Quantity),
       ])),
     }));
     setActualPartsServiceId(service.ServiceID);
