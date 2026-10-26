@@ -121,6 +121,22 @@ adminDashboard: () => request('/admin/dashboard'),
 adminAppointments: () => request('/admin/appointments'),
 
 adminMechanics: () => request('/admin/mechanics'),
+adminParts: () => request('/admin/parts'),
+createInventoryPart: (payload) =>
+  request('/admin/parts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+updateInventoryPart: (partId, payload) =>
+  request(`/admin/parts/${encodeURIComponent(partId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+receiveInventoryStock: (partId, quantity) =>
+  request(`/admin/parts/${encodeURIComponent(partId)}/stock`, {
+    method: 'POST',
+    body: JSON.stringify({ Quantity: Number(quantity) }),
+  }),
 
 assignMechanic: (appointmentId, mechanicId) =>
   request(
