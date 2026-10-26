@@ -36,7 +36,6 @@ function App() {
   const [page, setPage] = useState("home");
   const [authMode, setAuthMode] = useState("login");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [cursor, setCursor] = useState({ x: -30, y: -30 });
   const [user, setUser] = useState(() => {
     try {
       return JSON.parse(sessionStorage.getItem("autodb-user") || "null");
@@ -246,6 +245,8 @@ useEffect(() => {
     if (!user || user.role !== "mechanic" || page !== "mechanic") return;
 
     let active = true;
+    // This effect intentionally toggles a loading indicator for the async request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMechanicServicesLoading(true);
 
     api
@@ -273,11 +274,7 @@ useEffect(() => {
   }, [user, page]);
 
   useEffect(() => {
-    if (!user || user.role !== "customer") {
-      setNextAppointment(null);
-      setNextAppointmentError("");
-      return;
-    }
+    if (!user || user.role !== "customer") return;
 
     let active = true;
 
@@ -304,6 +301,8 @@ useEffect(() => {
   useEffect(() => {
     if (!user || user.role !== "customer" || page !== "estimates") return;
     let active = true;
+    // Track the request lifecycle for the customer estimates screen.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCustomerEstimatesLoading(true);
     setCustomerEstimatesError("");
     api.customerEstimates()
@@ -428,6 +427,8 @@ useEffect(() => {
 
   let active = true;
 
+  // Track the request lifecycle for the customer invoices screen.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   setCustomerInvoicesLoading(true);
   setCustomerInvoicesError("");
 
@@ -470,6 +471,8 @@ useEffect(() => {
     }
 
     let active = true;
+    // Track the request lifecycle for the admin invoice screen.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setInvoiceLoading(true);
     setInvoicesError("");
 
@@ -519,6 +522,8 @@ useEffect(() => {
     }
 
     let active = true;
+    // Track the request lifecycle for the payment screen.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPaymentsLoading(true);
     setPaymentsError("");
 
@@ -1585,6 +1590,7 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
             updatingAppointmentId={updatingAppointmentId}
             appointmentUpdateError={appointmentUpdateError}
             appointmentUpdateNotice={appointmentUpdateNotice}
+            onAssignmentError={(message) => setAppointmentUpdateError(message)}
             onUpdateAppointment={handleAppointmentStatusUpdate}
             navigate={navigate}
             onCreateStaff={handleCreateStaff}
@@ -2811,6 +2817,7 @@ function AdminDashboard({
   updatingAppointmentId,
   appointmentUpdateError,
   appointmentUpdateNotice,
+  onAssignmentError,
   onUpdateAppointment,
   navigate,
 }) {
@@ -3157,7 +3164,7 @@ function AdminDashboard({
           );
 
           if (!select?.value) {
-            setAppointmentUpdateError(
+            onAssignmentError(
               `Choose a mechanic for appointment #${item.AppointmentID}.`
             );
             return;
