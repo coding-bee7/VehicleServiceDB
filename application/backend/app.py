@@ -2156,6 +2156,7 @@ def mechanic_services():
                 sr.StartDate,
                 sr.EndDate,
                 sr.Odometer,
+                sr.ActualPartsConfirmed,
                 sr.Status AS ServiceStatus,
                 a.AppointmentDate,
                 a.Complaint,
