@@ -891,12 +891,12 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
     } finally { setEstimateDecisionSavingId(null); }
   };
 
-  const handleCompleteService = async (serviceId) => {
+  const handleCompleteService = async (serviceId, workPerformed) => {
     setCompletingServiceId(serviceId);
     setMechanicServicesError("");
 
     try {
-      await api.completeService(serviceId);
+      await api.completeService(serviceId, workPerformed);
 
       const result = await api.mechanicServices();
       const list = Array.isArray(result) ? result : result?.value || [];
@@ -3476,6 +3476,7 @@ function MechanicDashboard({
   });
   const [actualPartsServiceId, setActualPartsServiceId] = useState(null);
   const [actualPartsDrafts, setActualPartsDrafts] = useState({});
+  const [workPerformedDrafts, setWorkPerformedDrafts] = useState({});
 
   const assigned = services.length;
   const inProgress = services.filter((service) => service.ServiceStatus === "In Progress").length;
@@ -3642,6 +3643,19 @@ function MechanicDashboard({
 
               {service.ServiceStatus === "In Progress" && (
                 <div className="actual-parts-section">
+                  <label className="field actual-work-field">ACTUAL WORK PERFORMED
+                    <textarea
+                      required
+                      rows="3"
+                      maxLength="4000"
+                      value={workPerformedDrafts[service.ServiceID] ?? service.WorkPerformed ?? ""}
+                      onChange={(event) => setWorkPerformedDrafts((current) => ({
+                        ...current,
+                        [service.ServiceID]: event.target.value,
+                      }))}
+                      placeholder="Describe the approved repairs or maintenance actually completed"
+                    />
+                  </label>
                   <p className="muted">Record the quantities actually installed or consumed. Unused approved parts can be set to zero.</p>
                   {actualPartsServiceId === service.ServiceID ? (
                     <>
@@ -3673,9 +3687,14 @@ function MechanicDashboard({
                         {service.ActualPartsConfirmed ? "EDIT ACTUAL PARTS" : "RECORD ACTUAL PARTS USED"}
                       </button>
                       {service.ActualPartsConfirmed && (
-                        <button className="button button-dark" disabled={completingServiceId === service.ServiceID} onClick={() => {
-                          if (window.confirm(`Complete Service #${service.ServiceID}? Confirmed actual part quantities will be deducted from inventory and the final invoice generated.`)) onComplete(service.ServiceID);
-                        }}>{completingServiceId === service.ServiceID ? "COMPLETING…" : "COMPLETE SERVICE"}</button>
+                        <button
+                          className="button button-dark"
+                          disabled={completingServiceId === service.ServiceID || !String(workPerformedDrafts[service.ServiceID] ?? service.WorkPerformed ?? "").trim()}
+                          onClick={() => {
+                            const workPerformed = String(workPerformedDrafts[service.ServiceID] ?? service.WorkPerformed ?? "").trim();
+                            if (window.confirm(`Complete Service #${service.ServiceID}? Confirmed actual part quantities will be deducted from inventory and the final invoice generated.`)) onComplete(service.ServiceID, workPerformed);
+                          }}
+                        >{completingServiceId === service.ServiceID ? "COMPLETING…" : "COMPLETE SERVICE"}</button>
                       )}
                     </div>
                   )}
