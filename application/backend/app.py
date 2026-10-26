@@ -647,6 +647,9 @@ def create_service_estimate(service_id):
 
         total = labor_cost + parts_cost
         cursor.execute("""
+            UPDATE ServiceRecord SET Odometer = %s WHERE ServiceID = %s
+        """, (odometer, service_id))
+        cursor.execute("""
             INSERT INTO ServiceInspection
                 (ServiceID, MechanicID, Findings, Odometer, RecommendedTasks)
             VALUES (%s, %s, %s, %s, %s)
@@ -2427,11 +2430,18 @@ def record_actual_parts(service_id):
                 """, (service_id, part_id))
             else:
                 cursor.execute("""
-                    UPDATE PartUsage
-                    SET QuantityUsed = %s, StockDeducted = FALSE
+                    SELECT PartID FROM PartUsage
                     WHERE ServiceID = %s AND PartID = %s
-                """, (quantity, service_id, part_id))
-                if cursor.rowcount == 0:
+                    FOR UPDATE
+                """, (service_id, part_id))
+                usage_exists = cursor.fetchone()
+                if usage_exists:
+                    cursor.execute("""
+                        UPDATE PartUsage
+                        SET QuantityUsed = %s, StockDeducted = FALSE
+                        WHERE ServiceID = %s AND PartID = %s
+                    """, (quantity, service_id, part_id))
+                else:
                     cursor.execute("""
                         SELECT UnitPrice FROM ServiceEstimatePart
                         WHERE EstimateID = %s AND PartID = %s
