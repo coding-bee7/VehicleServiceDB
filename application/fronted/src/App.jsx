@@ -119,6 +119,12 @@ function App() {
   const [staffSaving, setStaffSaving] = useState(false);
   const [staffNotice, setStaffNotice] = useState("");
   const [staffError, setStaffError] = useState("");
+  const [mechanicParts, setMechanicParts] = useState([]);
+  const [mechanicPartsError, setMechanicPartsError] = useState("");
+  const [customerEstimates, setCustomerEstimates] = useState([]);
+  const [customerEstimatesLoading, setCustomerEstimatesLoading] = useState(false);
+  const [customerEstimatesError, setCustomerEstimatesError] = useState("");
+  const [estimateDecisionSavingId, setEstimateDecisionSavingId] = useState(null);
 
   const cursorRef = useRef(null);
 
@@ -294,6 +300,46 @@ useEffect(() => {
       active = false;
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user || user.role !== "customer" || page !== "estimates") return;
+    let active = true;
+    setCustomerEstimatesLoading(true);
+    setCustomerEstimatesError("");
+    api.customerEstimates()
+      .then((result) => {
+        if (!active) return;
+        setCustomerEstimates(Array.isArray(result) ? result : []);
+      })
+      .catch((err) => {
+        if (active) {
+          setCustomerEstimates([]);
+          setCustomerEstimatesError(err.message || "Could not load estimates.");
+        }
+      })
+      .finally(() => {
+        if (active) setCustomerEstimatesLoading(false);
+      });
+    return () => { active = false; };
+  }, [user, page]);
+
+  useEffect(() => {
+    if (!user || user.role !== "mechanic" || page !== "mechanic") return;
+    let active = true;
+    api.mechanicParts()
+      .then((result) => {
+        if (!active) return;
+        setMechanicParts(Array.isArray(result) ? result : []);
+        setMechanicPartsError("");
+      })
+      .catch((err) => {
+        if (active) {
+          setMechanicParts([]);
+          setMechanicPartsError(err.message || "Could not load parts inventory.");
+        }
+      });
+    return () => { active = false; };
+  }, [user, page]);
 
   useEffect(() => {
     if (!user || user.role !== "customer" || page !== "my-services") return;
@@ -797,6 +843,52 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
     } finally {
       setCompletingServiceId(null);
     }
+  };
+
+  const handleSubmitEstimate = async (serviceId, payload) => {
+    setCompletingServiceId(serviceId);
+    setMechanicServicesError("");
+    try {
+      const result = await api.createServiceEstimate(serviceId, payload);
+      const refreshed = await api.mechanicServices();
+      setMechanicServices(Array.isArray(refreshed) ? refreshed : []);
+      setNotice(result.message || "Inspection and estimate submitted to the customer.");
+      return true;
+    } catch (err) {
+      setMechanicServicesError(err.message || "Could not submit the estimate.");
+      return false;
+    } finally { setCompletingServiceId(null); }
+  };
+
+  const handleRecordActualParts = async (serviceId, parts) => {
+    setCompletingServiceId(serviceId);
+    setMechanicServicesError("");
+    try {
+      const result = await api.recordActualParts(serviceId, parts);
+      const refreshed = await api.mechanicServices();
+      setMechanicServices(Array.isArray(refreshed) ? refreshed : []);
+      setNotice(result.message || "Actual parts used saved.");
+      return true;
+    } catch (err) {
+      setMechanicServicesError(err.message || "Could not save actual parts.");
+      return false;
+    } finally { setCompletingServiceId(null); }
+  };
+
+  const handleDecideEstimate = async (estimateId, decision) => {
+    setEstimateDecisionSavingId(estimateId);
+    setCustomerEstimatesError("");
+    setNotice("");
+    try {
+      const result = await api.decideEstimate(estimateId, decision);
+      const refreshed = await api.customerEstimates();
+      setCustomerEstimates(Array.isArray(refreshed) ? refreshed : []);
+      setNotice(result.message || `Estimate ${decision.toLowerCase()}.`);
+      return true;
+    } catch (err) {
+      setCustomerEstimatesError(err.message || "Could not save estimate decision.");
+      return false;
+    } finally { setEstimateDecisionSavingId(null); }
   };
 
   const handleCompleteService = async (serviceId) => {
@@ -1470,7 +1562,18 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
 
 
         
-        {page === "admin" && (
+        {page === "estimates" && user?.role === "customer" && (
+           <CustomerEstimates
+             estimates={customerEstimates}
+             loading={customerEstimatesLoading}
+             error={customerEstimatesError}
+             savingId={estimateDecisionSavingId}
+             notice={notice}
+             onDecision={handleDecideEstimate}
+           />
+         )}
+
+         {page === "admin" && (
           <AdminDashboard
             user={user}
             data={dashboard}
@@ -1910,7 +2013,11 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
             error={mechanicServicesError}
             notice={notice}
             completingServiceId={completingServiceId}
+            parts={mechanicParts}
+            partsError={mechanicPartsError}
             onStart={handleStartService}
+            onSubmitEstimate={handleSubmitEstimate}
+            onRecordActualParts={handleRecordActualParts}
             onComplete={handleCompleteService}
             onRefresh={() => {
               setPage("home");
@@ -1948,6 +2055,7 @@ function AppNavbar({ user, navigate, logout, menuOpen, setMenuOpen }) {
             <button onClick={() => navigate("dashboard")}>DASHBOARD</button>
             <button onClick={() => navigate("my-services")}>MY SERVICES</button>
             <button onClick={() => navigate("my-vehicles")}>MY VEHICLES</button>
+            <button onClick={() => navigate("estimates")}>ESTIMATE APPROVALS</button>
             <button onClick={() => navigate("my-invoices")}>MY INVOICES</button>
             <button className="nav-cta" onClick={() => navigate("book")}>
               BOOK A SERVICE ↗
