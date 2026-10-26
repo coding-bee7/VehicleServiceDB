@@ -100,9 +100,10 @@ startService: (id) =>
     method: 'POST',
   }),
 
-completeService: (id) =>
+completeService: (id, workPerformed) =>
   request(`/services/${encodeURIComponent(id)}/complete`, {
     method: 'POST',
+    body: JSON.stringify({ WorkPerformed: workPerformed }),
   }),
   
 createAppointment: (payload) =>
