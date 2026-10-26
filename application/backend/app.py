@@ -2636,22 +2636,19 @@ def complete_service(service_id):
                     409
                 )
 
-        # Calculate labour and parts independently to avoid join
-        # multiplication when a service has multiple tasks and parts.
+        # Use the customer-approved labour amount. Actual parts are
+        # calculated from PartUsage after the mechanic confirms consumption.
         cursor.execute("""
-            SELECT COALESCE(SUM(LaborCost), 0) AS LaborTotal
-            FROM ServiceTask
-            WHERE ServiceID = %s
+            SELECT LaborCost
+            FROM ServiceEstimate
+            WHERE ServiceID = %s AND Status = 'Approved'
+            FOR UPDATE
         """, (service_id,))
-        labor_total = cursor.fetchone()["LaborTotal"]
-        if not labor_total or Decimal(str(labor_total)) == Decimal("0"):
-            cursor.execute("""
-                SELECT LaborCost FROM ServiceEstimate
-                WHERE ServiceID = %s AND Status = 'Approved'
-            """, (service_id,))
-            estimate_labor = cursor.fetchone()
-            if estimate_labor and estimate_labor["LaborCost"] is not None:
-                labor_total = estimate_labor["LaborCost"]
+        approved_estimate = cursor.fetchone()
+        if approved_estimate is None:
+            connection.rollback()
+            return error_response("An approved estimate is required to invoice this service", 409)
+        labor_total = approved_estimate["LaborCost"]
 
         cursor.execute("""
             SELECT COALESCE(SUM(QuantityUsed * UnitPrice), 0)
