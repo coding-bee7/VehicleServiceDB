@@ -3353,6 +3353,103 @@ function ApiNotice({ text }) {
   );
 }
 
+function CustomerEstimates({
+  estimates,
+  loading,
+  error,
+  savingId,
+  notice,
+  onDecision,
+}) {
+  return (
+    <section className="dashboard-page">
+      <PageHeading
+        eyebrow="CUSTOMER APPROVAL"
+        title={<>Review your service <em>estimate.</em></>}
+        description="Review the inspection findings, recommended work, parts and costs. Work will not begin until you approve the estimate."
+      />
+      {notice && <p className="form-success" role="status">{notice}</p>}
+      {error && <ApiNotice text={error} />}
+      {loading ? (
+        <p className="muted">Loading estimates…</p>
+      ) : estimates.length === 0 ? (
+        <div className="panel">
+          <span className="section-index">NO ESTIMATES YET</span>
+          <h3>Your mechanic's inspection will appear here.</h3>
+          <p className="muted">Once the mechanic records the inspection and prepares a proposal, you can review it here.</p>
+        </div>
+      ) : (
+        <div className="dashboard-columns">
+          {estimates.map((estimate) => (
+            <article className="panel" key={estimate.EstimateID}>
+              <div className="panel-heading">
+                <div>
+                  <span className="section-index">ESTIMATE #{estimate.EstimateID} · SERVICE #{estimate.ServiceID}</span>
+                  <h3>{[estimate.Brand, estimate.Model].filter(Boolean).join(" ") || "Vehicle service"}</h3>
+                  <p className="muted">{estimate.RegistrationNo || "—"} · {estimate.Complaint || "General service"}</p>
+                </div>
+                <StatusBadge status={estimate.Status} />
+              </div>
+              <div className="estimate-detail">
+                <p><strong>Inspection findings</strong><br />{estimate.Findings || "—"}</p>
+                {estimate.Odometer != null && <p><strong>Odometer</strong><br />{estimate.Odometer.toLocaleString("en-IN")} km</p>}
+                <p><strong>Recommended work</strong><br />{estimate.RecommendedTasks || "—"}</p>
+                <p><strong>Labour</strong><br />{estimate.LaborDescription || "Service labour"} — ₹{Number(estimate.LaborCost || 0).toFixed(2)}</p>
+              </div>
+              <div className="responsive-table">
+                <table>
+                  <thead><tr><th>PART</th><th>QTY</th><th>UNIT PRICE</th><th>AMOUNT</th></tr></thead>
+                  <tbody>
+                    {(estimate.Parts || []).map((part) => (
+                      <tr key={part.PartID}>
+                        <td>{part.PartName}</td>
+                        <td>{part.Quantity}</td>
+                        <td>₹{Number(part.UnitPrice || 0).toFixed(2)}</td>
+                        <td>₹{(Number(part.Quantity || 0) * Number(part.UnitPrice || 0)).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                    {(!estimate.Parts || estimate.Parts.length === 0) && (
+                      <tr><td colSpan="4">No spare parts proposed.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="estimate-total">
+                <span>PROPOSED TOTAL</span>
+                <strong>₹{Number(estimate.TotalAmount || 0).toFixed(2)}</strong>
+              </div>
+              {estimate.Status === "Proposed" ? (
+                <div className="estimate-actions">
+                  <button
+                    className="button button-dark"
+                    disabled={savingId === estimate.EstimateID}
+                    onClick={() => onDecision(estimate.EstimateID, "Approved")}
+                  >
+                    {savingId === estimate.EstimateID ? "SAVING…" : "APPROVE ESTIMATE"}
+                  </button>
+                  <button
+                    className="button button-outline"
+                    disabled={savingId === estimate.EstimateID}
+                    onClick={() => {
+                      if (window.confirm("Reject this estimate? The mechanic will need to revise the proposal before work can begin.")) {
+                        onDecision(estimate.EstimateID, "Rejected");
+                      }
+                    }}
+                  >
+                    REJECT
+                  </button>
+                </div>
+              ) : (
+                <p className="muted">Decision recorded: {estimate.Status}{estimate.DecisionAt ? ` on ${new Date(estimate.DecisionAt).toLocaleString()}` : ""}.</p>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function MechanicDashboard({
   user,
   services,
@@ -3360,144 +3457,234 @@ function MechanicDashboard({
   error,
   notice,
   completingServiceId,
+  parts,
+  partsError,
   onStart,
+  onSubmitEstimate,
+  onRecordActualParts,
   onComplete,
   onRefresh,
 }) {
+  const [estimateServiceId, setEstimateServiceId] = useState(null);
+  const [estimateDraft, setEstimateDraft] = useState({
+    Findings: "",
+    Odometer: "",
+    RecommendedTasks: "",
+    LaborDescription: "Labour and repair work",
+    LaborCost: "",
+    Parts: {},
+  });
+  const [actualPartsServiceId, setActualPartsServiceId] = useState(null);
+  const [actualPartsDrafts, setActualPartsDrafts] = useState({});
+
   const assigned = services.length;
-  const inProgress = services.filter(
-    (service) => service.ServiceStatus === "In Progress"
-  ).length;
-  const completed = services.filter(
-    (service) => service.ServiceStatus === "Completed"
-  ).length;
+  const inProgress = services.filter((service) => service.ServiceStatus === "In Progress").length;
+  const completed = services.filter((service) => service.ServiceStatus === "Completed").length;
+
+  const openEstimateForm = (service) => {
+    setEstimateServiceId(service.ServiceID);
+    setEstimateDraft({
+      Findings: service.InspectionFindings || "",
+      Odometer: service.InspectionOdometer ?? service.Odometer ?? "",
+      RecommendedTasks: service.RecommendedTasks || "",
+      LaborDescription: "Labour and repair work",
+      LaborCost: "",
+      Parts: {},
+    });
+  };
+
+  const updateEstimate = (key, value) => {
+    setEstimateDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const submitEstimate = async (event, service) => {
+    event.preventDefault();
+    const payload = {
+      ...estimateDraft,
+      Odometer: estimateDraft.Odometer === "" ? null : Number(estimateDraft.Odometer),
+      LaborCost: Number(estimateDraft.LaborCost),
+      Parts: Object.entries(estimateDraft.Parts)
+        .filter(([, quantity]) => Number(quantity) > 0)
+        .map(([PartID, Quantity]) => ({ PartID: Number(PartID), Quantity: Number(Quantity) })),
+    };
+    const success = await onSubmitEstimate(service.ServiceID, payload);
+    if (success) {
+      setEstimateServiceId(null);
+      setEstimateDraft({
+        Findings: "", Odometer: "", RecommendedTasks: "",
+        LaborDescription: "Labour and repair work", LaborCost: "", Parts: {},
+      });
+    }
+  };
+
+  const openActualParts = (service) => {
+    const saved = Object.fromEntries((service.ActualParts || []).map((part) => [part.PartID, part.QuantityUsed]));
+    setActualPartsDrafts((current) => ({
+      ...current,
+      [service.ServiceID]: Object.fromEntries((service.EstimateParts || []).map((part) => [
+        part.PartID,
+        saved[part.PartID] ?? part.Quantity,
+      ])),
+    }));
+    setActualPartsServiceId(service.ServiceID);
+  };
+
+  const saveActualParts = async (service) => {
+    const draft = actualPartsDrafts[service.ServiceID] || {};
+    const payload = (service.EstimateParts || []).map((part) => ({
+      PartID: part.PartID,
+      Quantity: Number(draft[part.PartID] ?? part.Quantity),
+    }));
+    const success = await onRecordActualParts(service.ServiceID, payload);
+    if (success) setActualPartsServiceId(null);
+  };
 
   return (
     <section className="dashboard-page">
       <PageHeading
         eyebrow="WORKSHOP OPERATIONS"
-        title={
-          <>
-            Your assigned work,
-            <br />
-            <em>at a glance.</em>
-          </>
-        }
-        description={`Welcome${
-          user?.name ? `, ${user.name}` : ""
-        }. Review your assigned services and update completed work.`}
-        action={
-          <button className="button button-dark" onClick={onRefresh}>
-            REFRESH <span>↻</span>
-          </button>
-        }
+        title={<>Your assigned work,<br /><em>at a glance.</em></>}
+        description={`Welcome${user?.name ? `, ${user.name}` : ""}. Record inspection findings, prepare customer estimates and complete approved work.`}
+        action={<button className="button button-dark" onClick={onRefresh}>REFRESH <span>↻</span></button>}
       />
-
       {error && <ApiNotice text={error} />}
-      {notice && (
-        <p className="form-success" role="status">
-          {notice}
-        </p>
-      )}
-
+      {partsError && <ApiNotice text={partsError} />}
+      {notice && <p className="form-success" role="status">{notice}</p>}
       <div className="stat-grid">
-        <Stat
-          label="ASSIGNED SERVICES"
-          value={assigned}
-          note="Jobs assigned to you"
-        />
+        <Stat label="ASSIGNED SERVICES" value={assigned} note="Jobs assigned to you" />
         <Stat label="IN PROGRESS" value={inProgress} note="Active work" />
         <Stat label="COMPLETED" value={completed} note="Finished services" />
       </div>
 
-      <div className="table-panel">
-        <div className="table-title">
-          <div>
-            <span className="section-index">MY WORK</span>
-            <h3>Assigned services</h3>
-          </div>
-          <span className="muted">{assigned} records</span>
-        </div>
+      {loading ? (
+        <div className="panel"><p className="muted">Loading assigned services…</p></div>
+      ) : services.length === 0 ? (
+        <div className="panel"><p className="muted">No services are currently assigned to you.</p></div>
+      ) : (
+        <div className="estimate-service-list">
+          {services.map((service) => (
+            <article className="panel" key={service.ServiceID}>
+              <div className="panel-heading">
+                <div>
+                  <span className="section-index">SERVICE #{service.ServiceID}</span>
+                  <h3>{[service.Brand, service.Model].filter(Boolean).join(" ") || "Vehicle service"}</h3>
+                  <p className="muted">{service.CustomerName || "Customer"} · {service.RegistrationNo || "—"}</p>
+                </div>
+                <StatusBadge status={service.ServiceStatus} />
+              </div>
+              <p className="muted">{service.Complaint || "General service"} · {service.AppointmentDate ? new Date(service.AppointmentDate).toLocaleString() : "Date not set"}</p>
+              {service.EstimateStatus && (
+                <p className="muted">Estimate status: <strong>{service.EstimateStatus}</strong>{service.EstimateTotal != null ? ` · ₹${Number(service.EstimateTotal).toFixed(2)}` : ""}</p>
+              )}
 
-        {loading ? (
-          <p className="muted">Loading assigned services…</p>
-        ) : services.length === 0 ? (
-          <p className="muted">No services are currently assigned to you.</p>
-        ) : (
-          <div className="responsive-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>SERVICE</th>
-                  <th>CUSTOMER</th>
-                  <th>VEHICLE</th>
-                  <th>DATE</th>
-                  <th>STATUS</th>
-                  <th>ACTION</th>
-                </tr>
-              </thead>
-              <tbody>
-                {services.map((service) => (
-                  <tr key={service.ServiceID}>
-                    <td>
-                      #{service.ServiceID}
-                      <br />
-                      {service.Complaint || "General service"}
-                    </td>
-                    <td>{service.CustomerName || "—"}</td>
-                    <td>
-                      {[service.Brand, service.Model].filter(Boolean).join(" ")}
-                      <br />
-                      {service.RegistrationNo || "—"}
-                    </td>
-                    <td>
-                      {service.AppointmentDate
-                        ? new Date(service.AppointmentDate).toLocaleString()
-                        : "—"}
-                    </td>
-                    <td>
-                      <StatusBadge status={service.ServiceStatus} />
-                    </td>
-                    <td>
-                      {service.ServiceStatus === "Pending" ? (
-                        <button
-                          className="button button-dark"
-                          disabled={completingServiceId === service.ServiceID}
-                          onClick={() => onStart(service.ServiceID)}
-                        >
-                          {completingServiceId === service.ServiceID
-                            ? "STARTING…"
-                            : "START SERVICE"}
-                        </button>
-                      ) : service.ServiceStatus === "In Progress" ? (
-                        <button
-                          className="button button-dark"
-                          disabled={completingServiceId === service.ServiceID}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Complete Service #${service.ServiceID}? This will deduct used parts from stock and update the invoice.`
-                              )
-                            ) {
-                              onComplete(service.ServiceID);
-                            }
-                          }}
-                        >
-                          {completingServiceId === service.ServiceID
-                            ? "COMPLETING…"
-                            : "COMPLETE"}
-                        </button>
-                      ) : (
-                        <span className="muted">No action</span>
+              {estimateServiceId === service.ServiceID && (
+                <form className="form-stack inspection-form" onSubmit={(event) => submitEstimate(event, service)}>
+                  <h3>Vehicle inspection & proposed estimate</h3>
+                  <label className="field">INSPECTION FINDINGS
+                    <textarea required rows="3" value={estimateDraft.Findings} onChange={(event) => updateEstimate("Findings", event.target.value)} placeholder="Describe faults and diagnostic findings" />
+                  </label>
+                  <div className="form-grid">
+                    <label className="field">ODOMETER (KM)
+                      <input type="number" min="0" step="1" value={estimateDraft.Odometer} onChange={(event) => updateEstimate("Odometer", event.target.value)} placeholder="Current reading" />
+                    </label>
+                    <label className="field">LABOUR COST (₹)
+                      <input type="number" min="0" step="0.01" required value={estimateDraft.LaborCost} onChange={(event) => updateEstimate("LaborCost", event.target.value)} placeholder="0.00" />
+                    </label>
+                  </div>
+                  <label className="field">RECOMMENDED TASKS
+                    <textarea required rows="3" value={estimateDraft.RecommendedTasks} onChange={(event) => updateEstimate("RecommendedTasks", event.target.value)} placeholder="List the recommended repairs or maintenance" />
+                  </label>
+                  <label className="field">LABOUR DESCRIPTION
+                    <input required maxLength="255" value={estimateDraft.LaborDescription} onChange={(event) => updateEstimate("LaborDescription", event.target.value)} />
+                  </label>
+                  <div>
+                    <span className="section-index">PROPOSED PARTS (QUANTITY)</span>
+                    {parts.length === 0 ? <p className="muted">No inventory parts were returned. You can still submit a labour-only estimate.</p> : (
+                      <div className="estimate-parts-grid">
+                        {parts.map((part) => (
+                          <label className="estimate-part-choice" key={part.PartID}>
+                            <span><strong>{part.PartName}</strong><small>Stock {part.StockQuantity} · ₹{Number(part.UnitPrice).toFixed(2)} each</small></span>
+                            <input
+                              type="number" min="0" max={part.StockQuantity} step="1"
+                              aria-label={`Quantity of ${part.PartName}`}
+                              value={estimateDraft.Parts[part.PartID] ?? ""}
+                              onChange={(event) => updateEstimate("Parts", { ...estimateDraft.Parts, [part.PartID]: event.target.value })}
+                              placeholder="0"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="estimate-actions">
+                    <button className="button button-dark" type="submit" disabled={completingServiceId === service.ServiceID}>{completingServiceId === service.ServiceID ? "SUBMITTING…" : "SUBMIT ESTIMATE FOR APPROVAL"}</button>
+                    <button className="button button-outline" type="button" onClick={() => setEstimateServiceId(null)}>CANCEL</button>
+                  </div>
+                </form>
+              )}
+
+              {service.ServiceStatus === "Pending" && estimateServiceId !== service.ServiceID && (
+                <div className="estimate-actions">
+                  {!service.EstimateStatus || service.EstimateStatus === "Rejected" ? (
+                    <button className="button button-dark" onClick={() => openEstimateForm(service)}>INSPECT & PREPARE ESTIMATE</button>
+                  ) : service.EstimateStatus === "Proposed" ? (
+                    <>
+                      <span className="muted">Waiting for customer decision.</span>
+                      <button className="button button-outline" onClick={() => openEstimateForm(service)}>REVISE ESTIMATE</button>
+                    </>
+                  ) : service.EstimateStatus === "Approved" ? (
+                    <button className="button button-dark" disabled={completingServiceId === service.ServiceID} onClick={() => onStart(service.ServiceID)}>
+                      {completingServiceId === service.ServiceID ? "STARTING…" : "START APPROVED WORK"}
+                    </button>
+                  ) : null}
+                </div>
+              )}
+
+              {service.ServiceStatus === "In Progress" && (
+                <div className="actual-parts-section">
+                  <p className="muted">Record the quantities actually installed or consumed. Unused approved parts can be set to zero.</p>
+                  {actualPartsServiceId === service.ServiceID ? (
+                    <>
+                      {(service.EstimateParts || []).length === 0 ? <p className="muted">No parts were approved; save an empty list to confirm actual usage.</p> : (
+                        <div className="estimate-parts-grid">
+                          {service.EstimateParts.map((part) => (
+                            <label className="estimate-part-choice" key={part.PartID}>
+                              <span><strong>{part.PartName}</strong><small>Approved quantity: {part.Quantity}</small></span>
+                              <input type="number" min="0" max={part.Quantity} step="1"
+                                value={actualPartsDrafts[service.ServiceID]?.[part.PartID] ?? part.Quantity}
+                                aria-label={`Actual quantity of ${part.PartName}`}
+                                onChange={(event) => setActualPartsDrafts((current) => ({
+                                  ...current,
+                                  [service.ServiceID]: { ...(current[service.ServiceID] || {}), [part.PartID]: event.target.value },
+                                }))}
+                              />
+                            </label>
+                          ))}
+                        </div>
                       )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                      <div className="estimate-actions">
+                        <button className="button button-dark" disabled={completingServiceId === service.ServiceID} onClick={() => saveActualParts(service)}>SAVE ACTUAL PARTS USED</button>
+                        <button className="button button-outline" onClick={() => setActualPartsServiceId(null)}>CANCEL</button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="estimate-actions">
+                      <button className="button button-outline" onClick={() => openActualParts(service)}>
+                        {service.ActualPartsConfirmed ? "EDIT ACTUAL PARTS" : "RECORD ACTUAL PARTS USED"}
+                      </button>
+                      {service.ActualPartsConfirmed && (
+                        <button className="button button-dark" disabled={completingServiceId === service.ServiceID} onClick={() => {
+                          if (window.confirm(`Complete Service #${service.ServiceID}? Confirmed actual part quantities will be deducted from inventory and the final invoice generated.`)) onComplete(service.ServiceID);
+                        }}>{completingServiceId === service.ServiceID ? "COMPLETING…" : "COMPLETE SERVICE"}</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
