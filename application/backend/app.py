@@ -2197,6 +2197,15 @@ def mechanic_services():
                 """, (service["EstimateID"],))
             else:
                 service["EstimateParts"] = []
+            if service.get("ServiceStatus") == "In Progress":
+                service["ActualParts"] = fetch_all("""
+                    SELECT PartID, QuantityUsed, UnitPrice
+                    FROM PartUsage
+                    WHERE ServiceID = %s
+                    ORDER BY PartID
+                """, (service["ServiceID"],))
+            else:
+                service["ActualParts"] = []
         return jsonify(services)
 
     except Error:
