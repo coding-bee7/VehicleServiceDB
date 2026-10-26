@@ -2186,6 +2186,16 @@ def mechanic_services():
                 a.AppointmentDate DESC
         """, (int(employee_id),))
 
+        for service in services:
+            if service.get("EstimateID") and service.get("EstimateStatus") == "Approved":
+                service["EstimateParts"] = fetch_all("""
+                    SELECT PartID, PartName, Quantity, UnitPrice
+                    FROM ServiceEstimatePart
+                    WHERE EstimateID = %s
+                    ORDER BY PartName
+                """, (service["EstimateID"],))
+            else:
+                service["EstimateParts"] = []
         return jsonify(services)
 
     except Error:
@@ -2400,22 +2410,28 @@ def record_actual_parts(service_id):
                     "Actual quantity exceeds the approved estimate; a revised customer approval is required",
                     409
                 )
-            cursor.execute("""
-                UPDATE PartUsage
-                SET QuantityUsed = %s, StockDeducted = FALSE
-                WHERE ServiceID = %s AND PartID = %s
-            """, (quantity, service_id, part_id))
-            if cursor.rowcount == 0 and quantity > 0:
+            if quantity == 0:
                 cursor.execute("""
-                    SELECT UnitPrice FROM ServiceEstimatePart
-                    WHERE EstimateID = %s AND PartID = %s
-                """, (approved["EstimateID"], part_id))
-                estimate_part = cursor.fetchone()
+                    DELETE FROM PartUsage
+                    WHERE ServiceID = %s AND PartID = %s AND StockDeducted = FALSE
+                """, (service_id, part_id))
+            else:
                 cursor.execute("""
-                    INSERT INTO PartUsage
-                        (ServiceID, PartID, QuantityUsed, UnitPrice, StockDeducted)
-                    VALUES (%s, %s, %s, %s, FALSE)
-                """, (service_id, part_id, quantity, estimate_part["UnitPrice"]))
+                    UPDATE PartUsage
+                    SET QuantityUsed = %s, StockDeducted = FALSE
+                    WHERE ServiceID = %s AND PartID = %s
+                """, (quantity, service_id, part_id))
+                if cursor.rowcount == 0:
+                    cursor.execute("""
+                        SELECT UnitPrice FROM ServiceEstimatePart
+                        WHERE EstimateID = %s AND PartID = %s
+                    """, (approved["EstimateID"], part_id))
+                    estimate_part = cursor.fetchone()
+                    cursor.execute("""
+                        INSERT INTO PartUsage
+                            (ServiceID, PartID, QuantityUsed, UnitPrice, StockDeducted)
+                        VALUES (%s, %s, %s, %s, FALSE)
+                    """, (service_id, part_id, quantity, estimate_part["UnitPrice"]))
 
         # If a prefilled approved part is omitted, it was not used.
         for part_id in approved_parts:
