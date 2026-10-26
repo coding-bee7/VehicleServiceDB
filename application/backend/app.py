@@ -450,84 +450,12 @@ def list_services():
 @app.patch("/api/services/<int:service_id>/status")
 @role_required("Admin")
 def update_service_status(service_id):
-    data = read_json()
-    if data is None:
-        return error_response("Send a valid JSON object", 400)
-
-    status = data.get("Status")
-    allowed_statuses = {"Pending", "In Progress", "Completed"}
-
-    if not isinstance(status, str) or status not in allowed_statuses:
-        return error_response(
-            "Status must be Pending, In Progress, or Completed", 400
-        )
-    if status == "Completed":
-        return error_response(
-            "Use the transactional service-completion endpoint to complete work", 409
-        )
-    if status == "In Progress":
-        return error_response(
-            "Mechanic start is allowed only through the approved-estimate workflow", 409
-        )
-
-    connection = None
-    cursor = None
-    try:
-        connection = get_connection()
-        cursor = connection.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT ServiceID, AppointmentID, Status
-            FROM ServiceRecord
-            WHERE ServiceID = %s
-        """, (service_id,))
-        service = cursor.fetchone()
-
-        if service is None:
-            connection.rollback()
-            return error_response("Service record not found", 404)
-
-        if status == "Completed":
-            cursor.execute("""
-                UPDATE ServiceRecord
-                SET Status = %s,
-                    EndDate = COALESCE(EndDate, CURRENT_TIMESTAMP)
-                WHERE ServiceID = %s
-            """, (status, service_id))
-
-            cursor.execute("""
-                UPDATE Appointment
-                SET Status = 'Completed'
-                WHERE AppointmentID = %s
-            """, (service["AppointmentID"],))
-        else:
-            cursor.execute("""
-                UPDATE ServiceRecord
-                SET Status = %s
-                WHERE ServiceID = %s
-            """, (status, service_id))
-
-        connection.commit()
-
-        cursor.execute("""
-            SELECT ServiceID, AppointmentID, Status, StartDate, EndDate
-            FROM ServiceRecord
-            WHERE ServiceID = %s
-        """, (service_id,))
-        updated = json_safe(cursor.fetchone())
-        return jsonify(updated)
-
-    except Error:
-        if connection:
-            connection.rollback()
-        app.logger.exception("Could not update service status")
-        return error_response("Could not update service status", 500)
-    finally:
-        if cursor:
-            cursor.close()
-        if connection and connection.is_connected():
-            connection.close()
-
+    # Service status changes are intentionally controlled by the approved
+    # estimate, mechanic start, actual-parts, and transactional completion APIs.
+    return error_response(
+        "Use the approved-estimate workflow to change service status",
+        409
+    )
 
 
 # ---------------- INSPECTION AND CUSTOMER ESTIMATE APPROVAL ----------------
@@ -996,18 +924,13 @@ def update_appointment(appointment_id):
 
     status = data.get("Status", data.get("status"))
 
-    allowed_statuses = {
-        "Booked",
-        "Pending",
-        "Confirmed",
-        "In Progress",
-        "Completed",
-        "Cancelled",
-    }
+    # Appointment statuses are limited by database CHECK constraints.
+    # A service may only be marked completed by transactional completion.
+    allowed_statuses = {"Booked", "Confirmed", "Cancelled"}
 
     if status not in allowed_statuses:
         return error_response(
-            "Invalid appointment status",
+            "Appointment status must be Booked, Confirmed, or Cancelled. Service completion is recorded by the service workflow.",
             400,
         )
 
