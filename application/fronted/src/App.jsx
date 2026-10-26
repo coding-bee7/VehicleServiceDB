@@ -2814,6 +2814,14 @@ function AdminDashboard({
   onUpdateAppointment,
   navigate,
 }) {
+  const [staffForm, setStaffForm] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    password: "",
+  });
+  const [staffFormError, setStaffFormError] = useState("");
+
   if (!user) {
     return (
       <section className="simple-state">
@@ -2848,16 +2856,7 @@ function AdminDashboard({
 
   const stats = data && !data.__error ? data : {};
 
-  
-const [staffForm, setStaffForm] = useState({
-  name: "",
-  email: "",
-  phone: "",
-  password: "",
-});
-const [staffFormError, setStaffFormError] = useState("");
-
-const submitStaff = async (event) => {
+  const submitStaff = async (event) => {
   event.preventDefault();
   setStaffFormError("");
 
