@@ -15,9 +15,9 @@ A DBMS project for managing vehicle servicing operations using MySQL and an appl
 - `integration` — combined application and integration testing
 
 ## Project Structure
-- `database/` — schema, sample data and SQL queries
-- `frontend/` — frontend source code
-- `backend/` — backend source code and database connectivity
+- `application/frontend/` — React + Vite frontend source and dependencies
+- `application/backend/` — Flask API, authentication and database connectivity
+- `database/` — MySQL schema, sample data, migrations and queries
 - `documentation/` — report and ER diagram
 - `presentation/` — final presentation
 - `testing/` — test cases and verified results
@@ -33,5 +33,9 @@ A DBMS project for managing vehicle servicing operations using MySQL and an appl
 ## Current Status
 Development and integration are in progress. Testing results will be added after execution and verification.
 
-## Setup Instructions
-Setup commands and dependencies will be documented after the frontend and backend technologies are confirmed.
+## Local Development
+1. Configure `application/backend/.env` with `JWT_SECRET_KEY` and your local MySQL connection settings.
+2. In `application/backend/`, install `requirements.txt` and run `python app.py`.
+3. In `application/frontend/`, run `npm install` and `npm run dev`.
+4. Configure and verify `VehicleServiceDB` using the SQL files in `database/`; apply `inspection_estimate_migration.sql` to an existing database before testing inspection and estimate approval.
+5. Never commit `.env` files, passwords, or private configuration.

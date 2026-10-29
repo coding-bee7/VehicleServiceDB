@@ -19,12 +19,12 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: application/fronted/package-lock.json
+          cache-dependency-path: application/frontend/package-lock.json
       - name: Install frontend dependencies
-        working-directory: application/fronted
+        working-directory: application/frontend
         run: npm ci
       - name: Run frontend lint and build
-        working-directory: application/fronted
+        working-directory: application/frontend
         shell: bash
         run: |
           set +e
