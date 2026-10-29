@@ -1,0 +1,48 @@
+name: MVP validation
+
+on:
+  push:
+    branches: [feature/inspection-estimate-approval-mvp]
+  pull_request:
+    branches: [integration]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: application/frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: application/frontend
+        run: npm ci
+      - name: Run frontend lint and build
+        working-directory: application/frontend
+        shell: bash
+        run: |
+          set +e
+          npm run lint
+          lint_status=$?
+          npm run build
+          build_status=$?
+          echo "Lint exit code: $lint_status"
+          echo "Build exit code: $build_status"
+          if [ "$lint_status" -ne 0 ] || [ "$build_status" -ne 0 ]; then exit 1; fi
+
+  backend-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check backend syntax
+        working-directory: application/backend
+        run: python -m py_compile app.py
