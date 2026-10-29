@@ -156,7 +156,7 @@ Additional scripts extend the core structure:
 
 ### Important schema note
 
-The backend defines payment-history and invoice-payment routes that query a `Payment` table. The committed `schema.sql`, `user_account.sql`, and inspection/estimate migration do not create that table, and the mixed manual query file is not a reliable migration for it. **Before using payment recording/history endpoints on a fresh database, add and apply a reviewed migration that creates the required `Payment` table and its foreign keys.** The core `Invoice` table exists, but that alone does not create a payment ledger.
+The backend defines payment-history and invoice-payment routes that query the `Payment` table. The committed `database/schema.sql` creates `Payment` with foreign keys to `Invoice` and `Employee`, and checks for positive payment amounts and supported payment methods. Run `schema.sql` as part of a clean database setup before testing those routes. For an existing database, inspect whether `Payment` already exists before applying schema changes.
 
 ## Local setup
 
@@ -267,7 +267,7 @@ The exact access requirements and request/response fields are defined in the bac
 - `.github/workflows/mvp-validation.yml` defines frontend dependency installation, ESLint, Vite production build, and Python syntax compilation of `application/backend/app.py`.
 - Those CI steps do not start MySQL, apply database scripts, or run browser/API end-to-end tests.
 - `testing/` currently contains only a placeholder README; no dedicated automated database integration test suite is present in the tracked tree.
-- The `Payment` table is referenced by backend payment endpoints but is not created by the committed schema/migrations; see [Database design and SQL files](#database-design-and-sql-files).
+- Payment endpoints depend on the `Payment` table created by `database/schema.sql`; verify that the schema has been applied to your local database before testing those endpoints.
 - The helper `create_missing_mechanic_accounts.py` contains fixed employee IDs/names and validation assumptions. Inspect its target records and adjust it for your own database before running it.
 - Use a fresh local database for sample data. SQL in the mixed query files can change records, table definitions, or stock quantities.
 
