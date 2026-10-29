@@ -1726,3 +1726,291 @@ button {
     display: none !important;
   }
 }
+
+
+/* Inspection, estimate approval and actual parts workflow */
+.estimate-service-list {
+  display: grid;
+  gap: 18px;
+}
+.estimate-service-list > .panel {
+  min-width: 0;
+}
+.inspection-form {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid #e8ded2;
+}
+.inspection-form h3 {
+  margin: 0 0 4px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 27px;
+  font-weight: 400;
+}
+.estimate-parts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.estimate-part-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid #e2d7c9;
+  background: #fffcf7;
+  color: #5f4c3e;
+  font-size: 12px;
+}
+.estimate-part-choice > span {
+  display: grid;
+  gap: 5px;
+}
+.estimate-part-choice small {
+  color: #8a7a6b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.estimate-part-choice input {
+  width: 78px;
+  min-width: 60px;
+  min-height: 40px;
+  padding: 9px;
+  border: 1px solid #ded1c2;
+  background: #faf6f0;
+  color: #30251f;
+  font: inherit;
+}
+.estimate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+}
+.button-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 12px 17px;
+  color: #4a3428;
+  background: transparent;
+  border: 1px solid #b69a7d;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  cursor: pointer;
+}
+.button-outline:hover {
+  background: #f5ead9;
+}
+.estimate-detail {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 22px;
+  margin: 20px 0;
+}
+.estimate-detail p {
+  margin: 0;
+  color: #77695e;
+  font-size: 12px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.estimate-detail strong {
+  display: inline-block;
+  margin-bottom: 4px;
+  color: #4a3428;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+}
+.estimate-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #e2d7c9;
+}
+.estimate-total span {
+  color: #8b7967;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.estimate-total strong {
+  color: #4a3428;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 28px;
+  font-weight: 400;
+}
+.actual-parts-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #e8ded2;
+}
+@media (max-width: 760px) {
+  .estimate-parts-grid,
+  .estimate-detail {
+    grid-template-columns: 1fr;
+  }
+  .estimate-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .estimate-actions .button,
+  .estimate-actions .button-outline {
+    width: 100%;
+  }
+  .estimate-part-choice input {
+    width: 72px;
+  }
+}
+
+
+/* Admin inventory management */
+.inventory-create-panel,
+.inventory-list-panel {
+  margin-top: 24px;
+}
+.inventory-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.inventory-parts-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+.inventory-part-card {
+  padding: 20px;
+  border: 1px solid #e4d8ca;
+  border-radius: 4px;
+  background: #fffcf7;
+}
+.inventory-part-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.inventory-part-heading h4 {
+  margin: 8px 0 0;
+  color: #4a3428;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 21px;
+  font-weight: 400;
+}
+.inventory-stock-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 6px 9px;
+  border: 1px solid #bdc9b7;
+  border-radius: 2px;
+  background: #f1f5ed;
+  color: #4b6745;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .8px;
+  white-space: nowrap;
+}
+.inventory-stock-status.is-low {
+  border-color: #dfbca6;
+  background: #fbefe7;
+  color: #95502c;
+}
+.inventory-edit-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr .8fr;
+  gap: 14px;
+  align-items: end;
+}
+.inventory-stock-count {
+  display: grid;
+  gap: 4px;
+  min-height: 72px;
+  align-content: center;
+  padding: 10px 14px;
+  border-left: 2px solid #b69a7d;
+  background: #f6f0e8;
+}
+.inventory-stock-count span,
+.inventory-stock-count small {
+  color: #8a7a6b;
+  font-size: 10px;
+}
+.inventory-stock-count strong {
+  color: #4a3428;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 25px;
+  font-weight: 400;
+}
+.inventory-card-actions {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e8ded2;
+}
+.inventory-restock-control {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.inventory-restock-control .field {
+  min-width: 200px;
+}
+.inventory-restock-control .button-outline {
+  margin-bottom: 1px;
+}
+.inventory-page .panel-heading h3 {
+  margin-bottom: 4px;
+}
+.inventory-page input {
+  max-width: 100%;
+}
+.inventory-page .button:disabled,
+.inventory-page .button-outline:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+@media (max-width: 900px) {
+  .inventory-form-grid,
+  .inventory-edit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .inventory-form-grid,
+  .inventory-edit-grid {
+    grid-template-columns: 1fr;
+  }
+  .inventory-part-card {
+    padding: 15px;
+  }
+  .inventory-part-heading,
+  .inventory-card-actions,
+  .inventory-restock-control {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .inventory-restock-control .field {
+    min-width: 0;
+  }
+  .inventory-restock-control .button-outline {
+    width: 100%;
+  }
+}

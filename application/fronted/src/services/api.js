@@ -77,15 +77,33 @@ createVehicle: (payload) =>
   }),
 
 mechanicServices: () => request('/mechanic/services'),
+mechanicParts: () => request('/mechanic/parts'),
+createServiceEstimate: (serviceId, payload) =>
+  request(`/services/${encodeURIComponent(serviceId)}/estimate`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+recordActualParts: (serviceId, parts) =>
+  request(`/services/${encodeURIComponent(serviceId)}/actual-parts`, {
+    method: 'POST',
+    body: JSON.stringify({ Parts: parts }),
+  }),
+customerEstimates: () => request('/customer/estimates'),
+decideEstimate: (estimateId, decision, notes = '') =>
+  request(`/customer/estimates/${encodeURIComponent(estimateId)}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ Decision: decision, Notes: notes }),
+  }),
 
 startService: (id) =>
   request(`/services/${encodeURIComponent(id)}/start`, {
     method: 'POST',
   }),
 
-completeService: (id) =>
+completeService: (id, workPerformed) =>
   request(`/services/${encodeURIComponent(id)}/complete`, {
     method: 'POST',
+    body: JSON.stringify({ WorkPerformed: workPerformed }),
   }),
   
 createAppointment: (payload) =>
@@ -103,6 +121,22 @@ adminDashboard: () => request('/admin/dashboard'),
 adminAppointments: () => request('/admin/appointments'),
 
 adminMechanics: () => request('/admin/mechanics'),
+adminParts: () => request('/admin/parts'),
+createInventoryPart: (payload) =>
+  request('/admin/parts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+updateInventoryPart: (partId, payload) =>
+  request(`/admin/parts/${encodeURIComponent(partId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+receiveInventoryStock: (partId, quantity) =>
+  request(`/admin/parts/${encodeURIComponent(partId)}/stock`, {
+    method: 'POST',
+    body: JSON.stringify({ Quantity: Number(quantity) }),
+  }),
 
 assignMechanic: (appointmentId, mechanicId) =>
   request(

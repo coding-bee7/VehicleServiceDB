@@ -36,7 +36,6 @@ function App() {
   const [page, setPage] = useState("home");
   const [authMode, setAuthMode] = useState("login");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [cursor, setCursor] = useState({ x: -30, y: -30 });
   const [user, setUser] = useState(() => {
     try {
       return JSON.parse(sessionStorage.getItem("autodb-user") || "null");
@@ -119,6 +118,12 @@ function App() {
   const [staffSaving, setStaffSaving] = useState(false);
   const [staffNotice, setStaffNotice] = useState("");
   const [staffError, setStaffError] = useState("");
+  const [mechanicParts, setMechanicParts] = useState([]);
+  const [mechanicPartsError, setMechanicPartsError] = useState("");
+  const [customerEstimates, setCustomerEstimates] = useState([]);
+  const [customerEstimatesLoading, setCustomerEstimatesLoading] = useState(false);
+  const [customerEstimatesError, setCustomerEstimatesError] = useState("");
+  const [estimateDecisionSavingId, setEstimateDecisionSavingId] = useState(null);
 
   const cursorRef = useRef(null);
 
@@ -240,6 +245,8 @@ useEffect(() => {
     if (!user || user.role !== "mechanic" || page !== "mechanic") return;
 
     let active = true;
+    // This effect intentionally toggles a loading indicator for the async request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMechanicServicesLoading(true);
 
     api
@@ -267,11 +274,7 @@ useEffect(() => {
   }, [user, page]);
 
   useEffect(() => {
-    if (!user || user.role !== "customer") {
-      setNextAppointment(null);
-      setNextAppointmentError("");
-      return;
-    }
+    if (!user || user.role !== "customer") return;
 
     let active = true;
 
@@ -294,6 +297,48 @@ useEffect(() => {
       active = false;
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user || user.role !== "customer" || page !== "estimates") return;
+    let active = true;
+    // Track the request lifecycle for the customer estimates screen.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCustomerEstimatesLoading(true);
+    setCustomerEstimatesError("");
+    api.customerEstimates()
+      .then((result) => {
+        if (!active) return;
+        setCustomerEstimates(Array.isArray(result) ? result : []);
+      })
+      .catch((err) => {
+        if (active) {
+          setCustomerEstimates([]);
+          setCustomerEstimatesError(err.message || "Could not load estimates.");
+        }
+      })
+      .finally(() => {
+        if (active) setCustomerEstimatesLoading(false);
+      });
+    return () => { active = false; };
+  }, [user, page]);
+
+  useEffect(() => {
+    if (!user || user.role !== "mechanic" || page !== "mechanic") return;
+    let active = true;
+    api.mechanicParts()
+      .then((result) => {
+        if (!active) return;
+        setMechanicParts(Array.isArray(result) ? result : []);
+        setMechanicPartsError("");
+      })
+      .catch((err) => {
+        if (active) {
+          setMechanicParts([]);
+          setMechanicPartsError(err.message || "Could not load parts inventory.");
+        }
+      });
+    return () => { active = false; };
+  }, [user, page]);
 
   useEffect(() => {
     if (!user || user.role !== "customer" || page !== "my-services") return;
@@ -382,6 +427,8 @@ useEffect(() => {
 
   let active = true;
 
+  // Track the request lifecycle for the customer invoices screen.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   setCustomerInvoicesLoading(true);
   setCustomerInvoicesError("");
 
@@ -424,6 +471,8 @@ useEffect(() => {
     }
 
     let active = true;
+    // Track the request lifecycle for the admin invoice screen.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setInvoiceLoading(true);
     setInvoicesError("");
 
@@ -473,6 +522,8 @@ useEffect(() => {
     }
 
     let active = true;
+    // Track the request lifecycle for the payment screen.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPaymentsLoading(true);
     setPaymentsError("");
 
@@ -799,12 +850,58 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
     }
   };
 
-  const handleCompleteService = async (serviceId) => {
+  const handleSubmitEstimate = async (serviceId, payload) => {
+    setCompletingServiceId(serviceId);
+    setMechanicServicesError("");
+    try {
+      const result = await api.createServiceEstimate(serviceId, payload);
+      const refreshed = await api.mechanicServices();
+      setMechanicServices(Array.isArray(refreshed) ? refreshed : []);
+      setNotice(result.message || "Inspection and estimate submitted to the customer.");
+      return true;
+    } catch (err) {
+      setMechanicServicesError(err.message || "Could not submit the estimate.");
+      return false;
+    } finally { setCompletingServiceId(null); }
+  };
+
+  const handleRecordActualParts = async (serviceId, parts) => {
+    setCompletingServiceId(serviceId);
+    setMechanicServicesError("");
+    try {
+      const result = await api.recordActualParts(serviceId, parts);
+      const refreshed = await api.mechanicServices();
+      setMechanicServices(Array.isArray(refreshed) ? refreshed : []);
+      setNotice(result.message || "Actual parts used saved.");
+      return true;
+    } catch (err) {
+      setMechanicServicesError(err.message || "Could not save actual parts.");
+      return false;
+    } finally { setCompletingServiceId(null); }
+  };
+
+  const handleDecideEstimate = async (estimateId, decision, notes = "") => {
+    setEstimateDecisionSavingId(estimateId);
+    setCustomerEstimatesError("");
+    setNotice("");
+    try {
+      const result = await api.decideEstimate(estimateId, decision, notes);
+      const refreshed = await api.customerEstimates();
+      setCustomerEstimates(Array.isArray(refreshed) ? refreshed : []);
+      setNotice(result.message || `Estimate ${decision.toLowerCase()}.`);
+      return true;
+    } catch (err) {
+      setCustomerEstimatesError(err.message || "Could not save estimate decision.");
+      return false;
+    } finally { setEstimateDecisionSavingId(null); }
+  };
+
+  const handleCompleteService = async (serviceId, workPerformed) => {
     setCompletingServiceId(serviceId);
     setMechanicServicesError("");
 
     try {
-      await api.completeService(serviceId);
+      await api.completeService(serviceId, workPerformed);
 
       const result = await api.mechanicServices();
       const list = Array.isArray(result) ? result : result?.value || [];
@@ -1470,7 +1567,18 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
 
 
         
-        {page === "admin" && (
+        {page === "estimates" && user?.role === "customer" && (
+           <CustomerEstimates
+             estimates={customerEstimates}
+             loading={customerEstimatesLoading}
+             error={customerEstimatesError}
+             savingId={estimateDecisionSavingId}
+             notice={notice}
+             onDecision={handleDecideEstimate}
+           />
+         )}
+
+         {page === "admin" && (
           <AdminDashboard
             user={user}
             data={dashboard}
@@ -1482,6 +1590,7 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
             updatingAppointmentId={updatingAppointmentId}
             appointmentUpdateError={appointmentUpdateError}
             appointmentUpdateNotice={appointmentUpdateNotice}
+            onAssignmentError={(message) => setAppointmentUpdateError(message)}
             onUpdateAppointment={handleAppointmentStatusUpdate}
             navigate={navigate}
             onCreateStaff={handleCreateStaff}
@@ -1489,6 +1598,10 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
             staffNotice={staffNotice}
             staffError={staffError}
           />
+        )}
+
+        {page === "inventory" && (
+          <InventoryManagement user={user} />
         )}
 
         {page === "payments" && user?.role === "admin" && (
@@ -1910,7 +2023,11 @@ const handleAssignMechanic = async (appointmentId, mechanicId) => {
             error={mechanicServicesError}
             notice={notice}
             completingServiceId={completingServiceId}
+            parts={mechanicParts}
+            partsError={mechanicPartsError}
             onStart={handleStartService}
+            onSubmitEstimate={handleSubmitEstimate}
+            onRecordActualParts={handleRecordActualParts}
             onComplete={handleCompleteService}
             onRefresh={() => {
               setPage("home");
@@ -1948,6 +2065,7 @@ function AppNavbar({ user, navigate, logout, menuOpen, setMenuOpen }) {
             <button onClick={() => navigate("dashboard")}>DASHBOARD</button>
             <button onClick={() => navigate("my-services")}>MY SERVICES</button>
             <button onClick={() => navigate("my-vehicles")}>MY VEHICLES</button>
+            <button onClick={() => navigate("estimates")}>ESTIMATE APPROVALS</button>
             <button onClick={() => navigate("my-invoices")}>MY INVOICES</button>
             <button className="nav-cta" onClick={() => navigate("book")}>
               BOOK A SERVICE ↗
@@ -1958,6 +2076,7 @@ function AppNavbar({ user, navigate, logout, menuOpen, setMenuOpen }) {
         {user?.role === "admin" && (
           <>
             <button onClick={() => navigate("admin")}>ADMIN OVERVIEW</button>
+            <button onClick={() => navigate("inventory")}>INVENTORY</button>
             <button onClick={() => navigate("payments")}>PAYMENTS</button>
           </>
         )}
@@ -2703,9 +2822,18 @@ function AdminDashboard({
   updatingAppointmentId,
   appointmentUpdateError,
   appointmentUpdateNotice,
+  onAssignmentError,
   onUpdateAppointment,
   navigate,
 }) {
+  const [staffForm, setStaffForm] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    password: "",
+  });
+  const [staffFormError, setStaffFormError] = useState("");
+
   if (!user) {
     return (
       <section className="simple-state">
@@ -2740,16 +2868,7 @@ function AdminDashboard({
 
   const stats = data && !data.__error ? data : {};
 
-  
-const [staffForm, setStaffForm] = useState({
-  name: "",
-  email: "",
-  phone: "",
-  password: "",
-});
-const [staffFormError, setStaffFormError] = useState("");
-
-const submitStaff = async (event) => {
+  const submitStaff = async (event) => {
   event.preventDefault();
   setStaffFormError("");
 
@@ -3050,7 +3169,7 @@ const submitStaff = async (event) => {
           );
 
           if (!select?.value) {
-            setAppointmentUpdateError(
+            onAssignmentError(
               `Choose a mechanic for appointment #${item.AppointmentID}.`
             );
             return;
@@ -3072,32 +3191,36 @@ const submitStaff = async (event) => {
                       <td>
                         <div className="appointment-actions">
                           <select
-                            aria-label={`Status for appointment ${item.AppointmentID}`}
-                            defaultValue={
-                              item.AppointmentStatus ||
-                              item.Status ||
-                              item.status ||
-                              "Booked"
-                            }
-                            id={`appointment-status-${item.AppointmentID}`}
-                            disabled={
-                              updatingAppointmentId === item.AppointmentID
-                            }
-                          >
-                            <option value="Booked">Booked</option>
-                            <option value="Pending">Pending</option>
-                            <option value="Confirmed">Confirmed</option>
-                            <option value="In Progress">In Progress</option>
-                            <option value="Completed">Completed</option>
-                            <option value="Cancelled">Cancelled</option>
-                          </select>
+                             aria-label={`Status for appointment ${item.AppointmentID}`}
+                             defaultValue={
+                               item.AppointmentStatus ||
+                               item.Status ||
+                               item.status ||
+                               "Booked"
+                             }
+                             id={`appointment-status-${item.AppointmentID}`}
+                             disabled={
+                               updatingAppointmentId === item.AppointmentID ||
+                               ["In Progress", "Completed"].includes(item.ServiceStatus)
+                             }
+                           >
+                             <option value="Booked">Booked</option>
+                             <option value="Confirmed">Confirmed</option>
+                             <option value="Cancelled">Cancelled</option>
+                             {["Pending", "In Progress", "Completed"].includes(item.AppointmentStatus) && (
+                               <option value={item.AppointmentStatus} disabled>
+                                 {item.AppointmentStatus} (workflow-managed)
+                               </option>
+                             )}
+                           </select>
 
                           <button
                             type="button"
                             className="button button-dark"
                             disabled={
-                              updatingAppointmentId === item.AppointmentID
-                            }
+                               updatingAppointmentId === item.AppointmentID ||
+                               ["In Progress", "Completed"].includes(item.ServiceStatus)
+                             }
                             onClick={() => {
                               const select = document.getElementById(
                                 `appointment-status-${item.AppointmentID}`
@@ -3245,6 +3368,516 @@ function ApiNotice({ text }) {
   );
 }
 
+
+function InventoryManagement({ user }) {
+  const [parts, setParts] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [restockAmounts, setRestockAmounts] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [savingAction, setSavingAction] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [formError, setFormError] = useState("");
+  const [newPart, setNewPart] = useState({
+    PartName: "",
+    StockQuantity: "0",
+    UnitPrice: "",
+    ReorderLevel: "5",
+  });
+
+  const applyParts = (result) => {
+    const list = Array.isArray(result) ? result : [];
+    setParts(list);
+    setDrafts(Object.fromEntries(list.map((part) => [
+      String(part.PartID),
+      {
+        PartName: part.PartName || "",
+        UnitPrice: String(part.UnitPrice ?? ""),
+        ReorderLevel: String(part.ReorderLevel ?? 0),
+      },
+    ])));
+  };
+
+  const refreshParts = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.adminParts();
+      applyParts(result);
+    } catch (err) {
+      setError(err.message || "Could not load the inventory.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    api.adminParts()
+      .then((result) => {
+        if (!active) return;
+        const list = Array.isArray(result) ? result : [];
+        setParts(list);
+        setDrafts(Object.fromEntries(list.map((part) => [
+          String(part.PartID),
+          {
+            PartName: part.PartName || "",
+            UnitPrice: String(part.UnitPrice ?? ""),
+            ReorderLevel: String(part.ReorderLevel ?? 0),
+          },
+        ])));
+      })
+      .catch((err) => {
+        if (active) setError(err.message || "Could not load the inventory.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  if (!user || user.role !== "admin") {
+    return (
+      <section className="simple-state">
+        <span className="section-index">RESTRICTED AREA</span>
+        <h1>Inventory management</h1>
+        <p>Administrator access is required to manage workshop stock.</p>
+      </section>
+    );
+  }
+
+  const updateDraft = (partId, field, value) => {
+    setDrafts((current) => ({
+      ...current,
+      [String(partId)]: { ...current[String(partId)], [field]: value },
+    }));
+  };
+
+  const handleCreatePart = async (event) => {
+    event.preventDefault();
+    setFormError("");
+    setError("");
+    setNotice("");
+
+    const stock = Number(newPart.StockQuantity);
+    const price = Number(newPart.UnitPrice);
+    const reorder = Number(newPart.ReorderLevel);
+
+    if (!newPart.PartName.trim()) {
+      setFormError("Enter a part name.");
+      return;
+    }
+    if (!Number.isInteger(stock) || stock < 0) {
+      setFormError("Initial stock must be a non-negative whole number.");
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      setFormError("Enter a valid non-negative unit price.");
+      return;
+    }
+    if (!Number.isInteger(reorder) || reorder < 0) {
+      setFormError("Reorder level must be a non-negative whole number.");
+      return;
+    }
+
+    setSavingAction("create");
+    try {
+      const result = await api.createInventoryPart({
+        PartName: newPart.PartName.trim(),
+        StockQuantity: stock,
+        UnitPrice: price,
+        ReorderLevel: reorder,
+      });
+      setNotice(`Added ${result.PartName || newPart.PartName.trim()} to inventory.`);
+      setNewPart({ PartName: "", StockQuantity: "0", UnitPrice: "", ReorderLevel: "5" });
+      await refreshParts();
+    } catch (err) {
+      setFormError(err.message || "Could not add this part.");
+    } finally {
+      setSavingAction("");
+    }
+  };
+
+  const handleSavePart = async (partId) => {
+    const draft = drafts[String(partId)];
+    if (!draft) return;
+
+    const price = Number(draft.UnitPrice);
+    const reorder = Number(draft.ReorderLevel);
+    if (!draft.PartName.trim()) {
+      setError("Part name cannot be empty.");
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      setError("Unit price must be a valid non-negative number.");
+      return;
+    }
+    if (!Number.isInteger(reorder) || reorder < 0) {
+      setError("Reorder level must be a non-negative whole number.");
+      return;
+    }
+
+    setSavingAction(`save-${partId}`);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.updateInventoryPart(partId, {
+        PartName: draft.PartName.trim(),
+        UnitPrice: price,
+        ReorderLevel: reorder,
+      });
+      setNotice(result.message || "Part details updated.");
+      await refreshParts();
+    } catch (err) {
+      setError(err.message || "Could not update this part.");
+    } finally {
+      setSavingAction("");
+    }
+  };
+
+  const handleReceiveStock = async (partId) => {
+    const quantity = Number(restockAmounts[String(partId)]);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      setError("Enter a whole number greater than zero for stock received.");
+      return;
+    }
+
+    setSavingAction(`stock-${partId}`);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.receiveInventoryStock(partId, quantity);
+      setNotice(result.message || "Inventory stock received successfully.");
+      setRestockAmounts((current) => ({ ...current, [String(partId)]: "" }));
+      await refreshParts();
+    } catch (err) {
+      setError(err.message || "Could not update stock.");
+    } finally {
+      setSavingAction("");
+    }
+  };
+
+  const lowStockCount = parts.filter(
+    (part) => Number(part.StockQuantity) <= Number(part.ReorderLevel)
+  ).length;
+
+  return (
+    <section className="dashboard-page inventory-page">
+      <PageHeading
+        eyebrow="WORKSHOP OPERATIONS"
+        title={<>Inventory, under <em>control.</em></>}
+        description="Add spare parts, maintain prices and reorder thresholds, and record incoming stock. Inventory decreases automatically when a service is completed."
+        action={
+          <button className="button button-outline" type="button" onClick={refreshParts} disabled={loading}>
+            {loading ? "REFRESHING…" : "REFRESH INVENTORY ↻"}
+          </button>
+        }
+      />
+
+      {error && <ApiNotice text={error} />}
+      {notice && <p className="form-success" role="status">{notice}</p>}
+
+      <div className="stat-grid">
+        <Stat label="PART TYPES" value={parts.length} note="Items in the inventory catalogue" />
+        <Stat label="LOW STOCK" value={lowStockCount} note="At or below the reorder threshold" />
+        <Stat label="UNITS ON HAND" value={parts.reduce((sum, part) => sum + Number(part.StockQuantity || 0), 0)} note="Total counted units across all parts" />
+      </div>
+
+      <section className="panel inventory-create-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="section-index">INVENTORY CATALOGUE</span>
+            <h3>Add a spare part</h3>
+          </div>
+          <span className="panel-symbol">+</span>
+        </div>
+        <form className="form-stack" onSubmit={handleCreatePart}>
+          <div className="inventory-form-grid">
+            <label className="field">
+              <span>Part name</span>
+              <input required maxLength={100} value={newPart.PartName}
+                onChange={(event) => setNewPart((current) => ({ ...current, PartName: event.target.value }))}
+                placeholder="e.g. Oil Filter" />
+            </label>
+            <label className="field">
+              <span>Initial stock</span>
+              <input required type="number" min="0" step="1" value={newPart.StockQuantity}
+                onChange={(event) => setNewPart((current) => ({ ...current, StockQuantity: event.target.value }))} />
+            </label>
+            <label className="field">
+              <span>Unit price (₹)</span>
+              <input required type="number" min="0" step="0.01" value={newPart.UnitPrice}
+                onChange={(event) => setNewPart((current) => ({ ...current, UnitPrice: event.target.value }))}
+                placeholder="0.00" />
+            </label>
+            <label className="field">
+              <span>Reorder level</span>
+              <input required type="number" min="0" step="1" value={newPart.ReorderLevel}
+                onChange={(event) => setNewPart((current) => ({ ...current, ReorderLevel: event.target.value }))} />
+            </label>
+          </div>
+          {formError && <p className="form-error" role="alert">{formError}</p>}
+          <div className="estimate-actions">
+            <button className="button button-dark" type="submit" disabled={savingAction === "create"}>
+              {savingAction === "create" ? "ADDING PART…" : "ADD PART TO INVENTORY"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="panel inventory-list-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="section-index">STOCK CONTROL</span>
+            <h3>Parts and availability</h3>
+          </div>
+          <span className="muted">{parts.length} item{parts.length === 1 ? "" : "s"}</span>
+        </div>
+
+        {loading ? (
+          <p className="muted">Loading inventory…</p>
+        ) : parts.length === 0 ? (
+          <p className="muted">No parts found. Add your first spare part above.</p>
+        ) : (
+          <div className="inventory-parts-list">
+            {parts.map((part) => {
+              const draft = drafts[String(part.PartID)] || {
+                PartName: part.PartName,
+                UnitPrice: String(part.UnitPrice),
+                ReorderLevel: String(part.ReorderLevel),
+              };
+              const lowStock = Number(part.StockQuantity) <= Number(part.ReorderLevel);
+              return (
+                <article className="inventory-part-card" key={part.PartID}>
+                  <div className="inventory-part-heading">
+                    <div>
+                      <span className="section-index">PART #{part.PartID}</span>
+                      <h4>{part.PartName}</h4>
+                    </div>
+                    <span className={lowStock ? "inventory-stock-status is-low" : "inventory-stock-status"}>
+                      {lowStock ? "LOW STOCK" : "IN STOCK"}
+                    </span>
+                  </div>
+                  <div className="inventory-edit-grid">
+                    <label className="field">
+                      <span>Part name</span>
+                      <input maxLength={100} value={draft.PartName}
+                        onChange={(event) => updateDraft(part.PartID, "PartName", event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Unit price (₹)</span>
+                      <input type="number" min="0" step="0.01" value={draft.UnitPrice}
+                        onChange={(event) => updateDraft(part.PartID, "UnitPrice", event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Reorder level</span>
+                      <input type="number" min="0" step="1" value={draft.ReorderLevel}
+                        onChange={(event) => updateDraft(part.PartID, "ReorderLevel", event.target.value)} />
+                    </label>
+                    <div className="inventory-stock-count">
+                      <span>Current stock</span>
+                      <strong>{part.StockQuantity}</strong>
+                      <small>unit{Number(part.StockQuantity) === 1 ? "" : "s"} on hand</small>
+                    </div>
+                  </div>
+                  <div className="inventory-card-actions">
+                    <button className="button button-dark" type="button"
+                      disabled={savingAction === `save-${part.PartID}`}
+                      onClick={() => handleSavePart(part.PartID)}>
+                      {savingAction === `save-${part.PartID}` ? "SAVING…" : "SAVE DETAILS"}
+                    </button>
+                    <div className="inventory-restock-control">
+                      <label className="field">
+                        <span>Receive stock (units)</span>
+                        <input type="number" min="1" step="1"
+                          value={restockAmounts[String(part.PartID)] ?? ""}
+                          onChange={(event) => setRestockAmounts((current) => ({
+                            ...current, [String(part.PartID)]: event.target.value,
+                          }))}
+                          placeholder="Quantity received" />
+                      </label>
+                      <button className="button button-outline" type="button"
+                        disabled={savingAction === `stock-${part.PartID}`}
+                        onClick={() => handleReceiveStock(part.PartID)}>
+                        {savingAction === `stock-${part.PartID}` ? "UPDATING…" : "ADD STOCK"}
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function CustomerEstimates({
+  estimates,
+  loading,
+  error,
+  savingId,
+  notice,
+  onDecision,
+}) {
+  const [rejectingEstimateId, setRejectingEstimateId] = useState(null);
+  const [rejectionNotes, setRejectionNotes] = useState("");
+  const [rejectionError, setRejectionError] = useState("");
+
+  const submitRejection = async (event, estimateId) => {
+    event.preventDefault();
+    const notes = rejectionNotes.trim();
+    if (!notes) {
+      setRejectionError("Please explain what needs to be changed.");
+      return;
+    }
+
+    const succeeded = await onDecision(estimateId, "Rejected", notes);
+    if (succeeded) {
+      setRejectingEstimateId(null);
+      setRejectionNotes("");
+      setRejectionError("");
+    }
+  };
+
+  return (
+    <section className="dashboard-page">
+      <PageHeading
+        eyebrow="CUSTOMER APPROVAL"
+        title={<>Review your service <em>estimate.</em></>}
+        description="Review the inspection findings, recommended work, parts and costs. Work will not begin until you approve the estimate."
+      />
+      {notice && <p className="form-success" role="status">{notice}</p>}
+      {error && <ApiNotice text={error} />}
+      {loading ? (
+        <p className="muted">Loading estimates…</p>
+      ) : estimates.length === 0 ? (
+        <div className="panel">
+          <span className="section-index">NO ESTIMATES YET</span>
+          <h3>Your mechanic's inspection will appear here.</h3>
+          <p className="muted">Once the mechanic records the inspection and prepares a proposal, you can review it here.</p>
+        </div>
+      ) : (
+        <div className="dashboard-columns">
+          {estimates.map((estimate) => (
+            <article className="panel" key={estimate.EstimateID}>
+              <div className="panel-heading">
+                <div>
+                  <span className="section-index">ESTIMATE #{estimate.EstimateID} · SERVICE #{estimate.ServiceID}</span>
+                  <h3>{[estimate.Brand, estimate.Model].filter(Boolean).join(" ") || "Vehicle service"}</h3>
+                  <p className="muted">{estimate.RegistrationNo || "—"} · {estimate.Complaint || "General service"}</p>
+                </div>
+                <StatusBadge status={estimate.Status} />
+              </div>
+              <div className="estimate-detail">
+                <p><strong>Inspection findings</strong><br />{estimate.Findings || "—"}</p>
+                {estimate.Odometer != null && <p><strong>Odometer</strong><br />{estimate.Odometer.toLocaleString("en-IN")} km</p>}
+                <p><strong>Recommended work</strong><br />{estimate.RecommendedTasks || "—"}</p>
+                <p><strong>Labour</strong><br />{estimate.LaborDescription || "Service labour"} — ₹{Number(estimate.LaborCost || 0).toFixed(2)}</p>
+              </div>
+              <div className="responsive-table">
+                <table>
+                  <thead><tr><th>PART</th><th>QTY</th><th>UNIT PRICE</th><th>AMOUNT</th></tr></thead>
+                  <tbody>
+                    {(estimate.Parts || []).map((part) => (
+                      <tr key={part.PartID}>
+                        <td>{part.PartName}</td>
+                        <td>{part.Quantity}</td>
+                        <td>₹{Number(part.UnitPrice || 0).toFixed(2)}</td>
+                        <td>₹{(Number(part.Quantity || 0) * Number(part.UnitPrice || 0)).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                    {(!estimate.Parts || estimate.Parts.length === 0) && (
+                      <tr><td colSpan="4">No spare parts proposed.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="estimate-total">
+                <span>PROPOSED TOTAL</span>
+                <strong>₹{Number(estimate.TotalAmount || 0).toFixed(2)}</strong>
+              </div>
+              {estimate.Status === "Proposed" ? (
+                <>
+                <div className="estimate-actions">
+                  <button
+                    className="button button-dark"
+                    disabled={savingId === estimate.EstimateID}
+                    onClick={() => onDecision(estimate.EstimateID, "Approved")}
+                  >
+                    {savingId === estimate.EstimateID ? "SAVING…" : "APPROVE ESTIMATE"}
+                  </button>
+                  <button
+                    className="button button-outline"
+                    disabled={savingId === estimate.EstimateID}
+                    onClick={() => {
+                      setRejectingEstimateId(estimate.EstimateID);
+                      setRejectionNotes("");
+                      setRejectionError("");
+                    }}
+                  >
+                    REJECT
+                  </button>
+                </div>
+                {rejectingEstimateId === estimate.EstimateID && (
+                  <form
+                    className="form-stack inspection-form"
+                    onSubmit={(event) => submitRejection(event, estimate.EstimateID)}
+                  >
+                    <label className="field">
+                      REASON FOR REJECTION
+                      <textarea
+                        required
+                        rows={3}
+                        maxLength={500}
+                        value={rejectionNotes}
+                        onChange={(event) => {
+                          setRejectionNotes(event.target.value);
+                          if (rejectionError) setRejectionError("");
+                        }}
+                        placeholder="Tell the mechanic what you would like changed..."
+                      />
+                      <small>Required · maximum 500 characters</small>
+                    </label>
+                    {rejectionError && (
+                      <p className="form-error" role="alert">{rejectionError}</p>
+                    )}
+                    <div className="estimate-actions">
+                      <button
+                        type="submit"
+                        className="button button-dark"
+                        disabled={savingId === estimate.EstimateID}
+                      >
+                        {savingId === estimate.EstimateID ? "SUBMITTING…" : "SUBMIT REJECTION"}
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-outline"
+                        disabled={savingId === estimate.EstimateID}
+                        onClick={() => {
+                          setRejectingEstimateId(null);
+                          setRejectionNotes("");
+                          setRejectionError("");
+                        }}
+                      >
+                        CANCEL
+                      </button>
+                    </div>
+                  </form>
+                )}
+                </>
+              ) : (
+                <p className="muted">Decision recorded: {estimate.Status}{estimate.DecisionAt ? ` on ${new Date(estimate.DecisionAt).toLocaleString()}` : ""}.</p>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function MechanicDashboard({
   user,
   services,
@@ -3252,144 +3885,256 @@ function MechanicDashboard({
   error,
   notice,
   completingServiceId,
+  parts,
+  partsError,
   onStart,
+  onSubmitEstimate,
+  onRecordActualParts,
   onComplete,
   onRefresh,
 }) {
+  const [estimateServiceId, setEstimateServiceId] = useState(null);
+  const [estimateDraft, setEstimateDraft] = useState({
+    Findings: "",
+    Odometer: "",
+    RecommendedTasks: "",
+    LaborDescription: "Labour and repair work",
+    LaborCost: "",
+    Parts: {},
+  });
+  const [actualPartsServiceId, setActualPartsServiceId] = useState(null);
+  const [actualPartsDrafts, setActualPartsDrafts] = useState({});
+  const [workPerformedDrafts, setWorkPerformedDrafts] = useState({});
+
   const assigned = services.length;
-  const inProgress = services.filter(
-    (service) => service.ServiceStatus === "In Progress"
-  ).length;
-  const completed = services.filter(
-    (service) => service.ServiceStatus === "Completed"
-  ).length;
+  const inProgress = services.filter((service) => service.ServiceStatus === "In Progress").length;
+  const completed = services.filter((service) => service.ServiceStatus === "Completed").length;
+
+  const openEstimateForm = (service) => {
+    setEstimateServiceId(service.ServiceID);
+    setEstimateDraft({
+      Findings: service.InspectionFindings || "",
+      Odometer: service.InspectionOdometer ?? service.Odometer ?? "",
+      RecommendedTasks: service.RecommendedTasks || "",
+      LaborDescription: "Labour and repair work",
+      LaborCost: "",
+      Parts: {},
+    });
+  };
+
+  const updateEstimate = (key, value) => {
+    setEstimateDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const submitEstimate = async (event, service) => {
+    event.preventDefault();
+    const payload = {
+      ...estimateDraft,
+      Odometer: estimateDraft.Odometer === "" ? null : Number(estimateDraft.Odometer),
+      LaborCost: Number(estimateDraft.LaborCost),
+      Parts: Object.entries(estimateDraft.Parts)
+        .filter(([, quantity]) => Number(quantity) > 0)
+        .map(([PartID, Quantity]) => ({ PartID: Number(PartID), Quantity: Number(Quantity) })),
+    };
+    const success = await onSubmitEstimate(service.ServiceID, payload);
+    if (success) {
+      setEstimateServiceId(null);
+      setEstimateDraft({
+        Findings: "", Odometer: "", RecommendedTasks: "",
+        LaborDescription: "Labour and repair work", LaborCost: "", Parts: {},
+      });
+    }
+  };
+
+  const openActualParts = (service) => {
+    const saved = Object.fromEntries((service.ActualParts || []).map((part) => [part.PartID, part.QuantityUsed]));
+    setActualPartsDrafts((current) => ({
+      ...current,
+      [service.ServiceID]: Object.fromEntries((service.EstimateParts || []).map((part) => [
+        part.PartID,
+        saved[part.PartID] ?? (service.ActualPartsConfirmed ? 0 : part.Quantity),
+      ])),
+    }));
+    setActualPartsServiceId(service.ServiceID);
+  };
+
+  const saveActualParts = async (service) => {
+    const draft = actualPartsDrafts[service.ServiceID] || {};
+    const payload = (service.EstimateParts || []).map((part) => ({
+      PartID: part.PartID,
+      Quantity: Number(draft[part.PartID] ?? part.Quantity),
+    }));
+    const success = await onRecordActualParts(service.ServiceID, payload);
+    if (success) setActualPartsServiceId(null);
+  };
 
   return (
     <section className="dashboard-page">
       <PageHeading
         eyebrow="WORKSHOP OPERATIONS"
-        title={
-          <>
-            Your assigned work,
-            <br />
-            <em>at a glance.</em>
-          </>
-        }
-        description={`Welcome${
-          user?.name ? `, ${user.name}` : ""
-        }. Review your assigned services and update completed work.`}
-        action={
-          <button className="button button-dark" onClick={onRefresh}>
-            REFRESH <span>↻</span>
-          </button>
-        }
+        title={<>Your assigned work,<br /><em>at a glance.</em></>}
+        description={`Welcome${user?.name ? `, ${user.name}` : ""}. Record inspection findings, prepare customer estimates and complete approved work.`}
+        action={<button className="button button-dark" onClick={onRefresh}>REFRESH <span>↻</span></button>}
       />
-
       {error && <ApiNotice text={error} />}
-      {notice && (
-        <p className="form-success" role="status">
-          {notice}
-        </p>
-      )}
-
+      {partsError && <ApiNotice text={partsError} />}
+      {notice && <p className="form-success" role="status">{notice}</p>}
       <div className="stat-grid">
-        <Stat
-          label="ASSIGNED SERVICES"
-          value={assigned}
-          note="Jobs assigned to you"
-        />
+        <Stat label="ASSIGNED SERVICES" value={assigned} note="Jobs assigned to you" />
         <Stat label="IN PROGRESS" value={inProgress} note="Active work" />
         <Stat label="COMPLETED" value={completed} note="Finished services" />
       </div>
 
-      <div className="table-panel">
-        <div className="table-title">
-          <div>
-            <span className="section-index">MY WORK</span>
-            <h3>Assigned services</h3>
-          </div>
-          <span className="muted">{assigned} records</span>
-        </div>
+      {loading ? (
+        <div className="panel"><p className="muted">Loading assigned services…</p></div>
+      ) : services.length === 0 ? (
+        <div className="panel"><p className="muted">No services are currently assigned to you.</p></div>
+      ) : (
+        <div className="estimate-service-list">
+          {services.map((service) => (
+            <article className="panel" key={service.ServiceID}>
+              <div className="panel-heading">
+                <div>
+                  <span className="section-index">SERVICE #{service.ServiceID}</span>
+                  <h3>{[service.Brand, service.Model].filter(Boolean).join(" ") || "Vehicle service"}</h3>
+                  <p className="muted">{service.CustomerName || "Customer"} · {service.RegistrationNo || "—"}</p>
+                </div>
+                <StatusBadge status={service.ServiceStatus} />
+              </div>
+              <p className="muted">{service.Complaint || "General service"} · {service.AppointmentDate ? new Date(service.AppointmentDate).toLocaleString() : "Date not set"}</p>
+              {service.EstimateStatus && (
+                <p className="muted">Estimate status: <strong>{service.EstimateStatus}</strong>{service.EstimateTotal != null ? ` · ₹${Number(service.EstimateTotal).toFixed(2)}` : ""}</p>
+              )}
+              {service.EstimateStatus === "Rejected" && service.EstimateCustomerNotes && (
+                <p className="muted"><strong>Customer's reason for rejection:</strong> {service.EstimateCustomerNotes}</p>
+              )}
 
-        {loading ? (
-          <p className="muted">Loading assigned services…</p>
-        ) : services.length === 0 ? (
-          <p className="muted">No services are currently assigned to you.</p>
-        ) : (
-          <div className="responsive-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>SERVICE</th>
-                  <th>CUSTOMER</th>
-                  <th>VEHICLE</th>
-                  <th>DATE</th>
-                  <th>STATUS</th>
-                  <th>ACTION</th>
-                </tr>
-              </thead>
-              <tbody>
-                {services.map((service) => (
-                  <tr key={service.ServiceID}>
-                    <td>
-                      #{service.ServiceID}
-                      <br />
-                      {service.Complaint || "General service"}
-                    </td>
-                    <td>{service.CustomerName || "—"}</td>
-                    <td>
-                      {[service.Brand, service.Model].filter(Boolean).join(" ")}
-                      <br />
-                      {service.RegistrationNo || "—"}
-                    </td>
-                    <td>
-                      {service.AppointmentDate
-                        ? new Date(service.AppointmentDate).toLocaleString()
-                        : "—"}
-                    </td>
-                    <td>
-                      <StatusBadge status={service.ServiceStatus} />
-                    </td>
-                    <td>
-                      {service.ServiceStatus === "Pending" ? (
-                        <button
-                          className="button button-dark"
-                          disabled={completingServiceId === service.ServiceID}
-                          onClick={() => onStart(service.ServiceID)}
-                        >
-                          {completingServiceId === service.ServiceID
-                            ? "STARTING…"
-                            : "START SERVICE"}
-                        </button>
-                      ) : service.ServiceStatus === "In Progress" ? (
-                        <button
-                          className="button button-dark"
-                          disabled={completingServiceId === service.ServiceID}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `Complete Service #${service.ServiceID}? This will deduct used parts from stock and update the invoice.`
-                              )
-                            ) {
-                              onComplete(service.ServiceID);
-                            }
-                          }}
-                        >
-                          {completingServiceId === service.ServiceID
-                            ? "COMPLETING…"
-                            : "COMPLETE"}
-                        </button>
-                      ) : (
-                        <span className="muted">No action</span>
+              {estimateServiceId === service.ServiceID && (
+                <form className="form-stack inspection-form" onSubmit={(event) => submitEstimate(event, service)}>
+                  <h3>Vehicle inspection & proposed estimate</h3>
+                  <label className="field">INSPECTION FINDINGS
+                    <textarea required rows="3" value={estimateDraft.Findings} onChange={(event) => updateEstimate("Findings", event.target.value)} placeholder="Describe faults and diagnostic findings" />
+                  </label>
+                  <div className="form-grid">
+                    <label className="field">ODOMETER (KM)
+                      <input type="number" min="0" step="1" value={estimateDraft.Odometer} onChange={(event) => updateEstimate("Odometer", event.target.value)} placeholder="Current reading" />
+                    </label>
+                    <label className="field">LABOUR COST (₹)
+                      <input type="number" min="0" step="0.01" required value={estimateDraft.LaborCost} onChange={(event) => updateEstimate("LaborCost", event.target.value)} placeholder="0.00" />
+                    </label>
+                  </div>
+                  <label className="field">RECOMMENDED TASKS
+                    <textarea required rows="3" value={estimateDraft.RecommendedTasks} onChange={(event) => updateEstimate("RecommendedTasks", event.target.value)} placeholder="List the recommended repairs or maintenance" />
+                  </label>
+                  <label className="field">LABOUR DESCRIPTION
+                    <input required maxLength="255" value={estimateDraft.LaborDescription} onChange={(event) => updateEstimate("LaborDescription", event.target.value)} />
+                  </label>
+                  <div>
+                    <span className="section-index">PROPOSED PARTS (QUANTITY)</span>
+                    {parts.length === 0 ? <p className="muted">No inventory parts were returned. You can still submit a labour-only estimate.</p> : (
+                      <div className="estimate-parts-grid">
+                        {parts.map((part) => (
+                          <label className="estimate-part-choice" key={part.PartID}>
+                            <span><strong>{part.PartName}</strong><small>Stock {part.StockQuantity} · ₹{Number(part.UnitPrice).toFixed(2)} each</small></span>
+                            <input
+                              type="number" min="0" max={part.StockQuantity} step="1"
+                              aria-label={`Quantity of ${part.PartName}`}
+                              value={estimateDraft.Parts[part.PartID] ?? ""}
+                              onChange={(event) => updateEstimate("Parts", { ...estimateDraft.Parts, [part.PartID]: event.target.value })}
+                              placeholder="0"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="estimate-actions">
+                    <button className="button button-dark" type="submit" disabled={completingServiceId === service.ServiceID}>{completingServiceId === service.ServiceID ? "SUBMITTING…" : "SUBMIT ESTIMATE FOR APPROVAL"}</button>
+                    <button className="button button-outline" type="button" onClick={() => setEstimateServiceId(null)}>CANCEL</button>
+                  </div>
+                </form>
+              )}
+
+              {service.ServiceStatus === "Pending" && estimateServiceId !== service.ServiceID && (
+                <div className="estimate-actions">
+                  {!service.EstimateStatus || service.EstimateStatus === "Rejected" ? (
+                    <button className="button button-dark" onClick={() => openEstimateForm(service)}>INSPECT & PREPARE ESTIMATE</button>
+                  ) : service.EstimateStatus === "Proposed" ? (
+                    <>
+                      <span className="muted">Waiting for customer decision.</span>
+                      <button className="button button-outline" onClick={() => openEstimateForm(service)}>REVISE ESTIMATE</button>
+                    </>
+                  ) : service.EstimateStatus === "Approved" ? (
+                    <button className="button button-dark" disabled={completingServiceId === service.ServiceID} onClick={() => onStart(service.ServiceID)}>
+                      {completingServiceId === service.ServiceID ? "STARTING…" : "START APPROVED WORK"}
+                    </button>
+                  ) : null}
+                </div>
+              )}
+
+              {service.ServiceStatus === "In Progress" && (
+                <div className="actual-parts-section">
+                  <label className="field actual-work-field">ACTUAL WORK PERFORMED
+                    <textarea
+                      required
+                      rows="3"
+                      maxLength="4000"
+                      value={workPerformedDrafts[service.ServiceID] ?? service.WorkPerformed ?? ""}
+                      onChange={(event) => setWorkPerformedDrafts((current) => ({
+                        ...current,
+                        [service.ServiceID]: event.target.value,
+                      }))}
+                      placeholder="Describe the approved repairs or maintenance actually completed"
+                    />
+                  </label>
+                  <p className="muted">Record the quantities actually installed or consumed. Unused approved parts can be set to zero.</p>
+                  {actualPartsServiceId === service.ServiceID ? (
+                    <>
+                      {(service.EstimateParts || []).length === 0 ? <p className="muted">No parts were approved; save an empty list to confirm actual usage.</p> : (
+                        <div className="estimate-parts-grid">
+                          {service.EstimateParts.map((part) => (
+                            <label className="estimate-part-choice" key={part.PartID}>
+                              <span><strong>{part.PartName}</strong><small>Approved quantity: {part.Quantity}</small></span>
+                              <input type="number" min="0" max={part.Quantity} step="1"
+                                value={actualPartsDrafts[service.ServiceID]?.[part.PartID] ?? part.Quantity}
+                                aria-label={`Actual quantity of ${part.PartName}`}
+                                onChange={(event) => setActualPartsDrafts((current) => ({
+                                  ...current,
+                                  [service.ServiceID]: { ...(current[service.ServiceID] || {}), [part.PartID]: event.target.value },
+                                }))}
+                              />
+                            </label>
+                          ))}
+                        </div>
                       )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                      <div className="estimate-actions">
+                        <button className="button button-dark" disabled={completingServiceId === service.ServiceID} onClick={() => saveActualParts(service)}>SAVE ACTUAL PARTS USED</button>
+                        <button className="button button-outline" onClick={() => setActualPartsServiceId(null)}>CANCEL</button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="estimate-actions">
+                      <button className="button button-outline" onClick={() => openActualParts(service)}>
+                        {service.ActualPartsConfirmed ? "EDIT ACTUAL PARTS" : "RECORD ACTUAL PARTS USED"}
+                      </button>
+                      {service.ActualPartsConfirmed && (
+                        <button
+                          className="button button-dark"
+                          disabled={completingServiceId === service.ServiceID || !String(workPerformedDrafts[service.ServiceID] ?? service.WorkPerformed ?? "").trim()}
+                          onClick={() => {
+                            const workPerformed = String(workPerformedDrafts[service.ServiceID] ?? service.WorkPerformed ?? "").trim();
+                            if (window.confirm(`Complete Service #${service.ServiceID}? Confirmed actual part quantities will be deducted from inventory and the final invoice generated.`)) onComplete(service.ServiceID, workPerformed);
+                          }}
+                        >{completingServiceId === service.ServiceID ? "COMPLETING…" : "COMPLETE SERVICE"}</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
